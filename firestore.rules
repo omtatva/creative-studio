@@ -1,0 +1,399 @@
+rules_version = '2';
+
+// Multi-tenant isolation model:
+//  - `users/{uid}` — only the owning user can read/write their own profile.
+//  - `workspaces/{workspaceId}` — readable by any member of that workspace;
+//    writable only by the owner (initial creation happens via a
+//    transaction from a trusted client action).
+//  - `members/{workspaceId}_{uid}` — readable by members of that
+//    workspace; writable by workspace owners/admins.
+//  - `settings/{workspaceId}` — same access shape as workspace doc.
+//  - `workspaces/{workspaceId}/activity_logs/**`,
+//    `workspaces/{workspaceId}/notifications/{uid}/**` — scoped
+//    subcollections, inherit workspace membership checks.
+//  - `workspace_invites/{inviteId}` — owner/admin create/manage;
+//    invitee (matched by verified auth email, not workspace
+//    membership) may read and accept only their own invite.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isWorkspaceMember(workspaceId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/members/$(workspaceId + '_' + request.auth.uid));
+    }
+
+    function isWorkspaceOwner(workspaceId) {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid;
+    }
+
+    // Real role enum for this app is owner|admin|member|viewer (see
+    // MemberRole in types/workspace.types.ts) — used to restrict
+    // project creation to non-viewer roles below.
+    function memberRole(workspaceId) {
+      return get(/databases/$(database)/documents/members/$(workspaceId + '_' + request.auth.uid)).data.role;
+    }
+
+    function isWorkspaceMemberWithRole(workspaceId, roles) {
+      return isWorkspaceMember(workspaceId) && memberRole(workspaceId) in roles;
+    }
+
+    // Backs the "accept invite" membership-create path below: proves a
+    // brand-new membership doc corresponds to a real, still-pending
+    // invite addressed to the caller's own VERIFIED auth email (not
+    // anything the client merely claims), for exactly the role that
+    // invite grants — so a user can only ever join via an invite that
+    // was actually sent to them.
+    function isPendingInviteMatch(inviteId, data) {
+      let invite = get(/databases/$(database)/documents/workspace_invites/$(inviteId)).data;
+      return invite.workspaceId == data.workspaceId
+        && invite.email == request.auth.token.email
+        && invite.role == data.role
+        && invite.status == 'pending';
+    }
+
+    function isValidInviteAccept(data) {
+      return ('sourceInviteId' in data)
+        && data.sourceInviteId is string
+        && isPendingInviteMatch(data.sourceInviteId, data);
+    }
+
+    match /users/{uid} {
+      allow read, write: if isSelf(uid);
+    }
+
+    // Minimal-data slug registry — see WorkspaceSlug's doc comment in
+    // types/workspace.types.ts for why this exists separately from
+    // `workspaces`. Any signed-in user may read (checking availability
+    // must work for someone who isn't a member of ANY workspace yet)
+    // and create (reserving a slug while creating their own new
+    // workspace) — but never update or delete, so a slug can't be
+    // reassigned or squatted-then-freed once claimed. `create` only
+    // succeeds if the document doesn't already exist (Firestore's
+    // create-vs-update distinction), which is what actually enforces
+    // uniqueness — a second attempt at the same slug hits `update`
+    // (since the doc now exists) and is rejected.
+    match /workspace_slugs/{slug} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.slug == slug;
+      allow update, delete: if false;
+    }
+
+    match /workspaces/{workspaceId} {
+      allow read: if isWorkspaceMember(workspaceId);
+      allow create: if isSignedIn();
+      allow update, delete: if isWorkspaceOwner(workspaceId);
+
+      match /activity_logs/{logId} {
+        allow read: if isWorkspaceMember(workspaceId);
+        allow create: if isWorkspaceMember(workspaceId);
+        allow update, delete: if false;
+      }
+
+      match /notifications/{uid}/items/{itemId} {
+        allow read, write: if isSelf(uid);
+      }
+    }
+
+    match /members/{memberId} {
+      allow read: if isSignedIn();
+
+      // INITIAL OWNER BOOTSTRAP ONLY. A brand-new workspace has no
+      // members yet, so a normal "must already be a member to write
+      // membership" check can never be satisfied by its own first
+      // membership doc — that's the chicken-and-egg problem. Instead
+      // of falling back to "any signed-in user may create any
+      // membership doc" (too broad), this verifies three things
+      // together: (1) request.resource.data.userId ==
+      // request.auth.uid — nobody can bootstrap a membership for
+      // someone else; (2) request.resource.data.role == 'owner' —
+      // nobody can self-assign admin/member and skip a real invite
+      // flow; (3) the referenced workspace's `ownerId` (already
+      // committed at this point — workspaceService.createWorkspace
+      // writes workspaces/{id} BEFORE members/{id}, sequentially,
+      // specifically so this get() sees committed data, not an
+      // in-flight write) equals the caller — proving they're that
+      // workspace's rightful creator, not an arbitrary signed-in
+      // user. A normal member can never satisfy all three for a
+      // workspace they don't own.
+      //
+      // A second path exists below for INVITE ACCEPT — a signed-in
+      // user creating their OWN membership (never someone else's) by
+      // accepting a real pending invite addressed to them. See
+      // isValidInviteAccept above.
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && (
+          (request.resource.data.role == 'owner'
+            && get(/databases/$(database)/documents/workspaces/$(request.resource.data.workspaceId)).data.ownerId == request.auth.uid)
+          || (request.resource.data.role != 'owner' && isValidInviteAccept(request.resource.data))
+        );
+
+      allow update, delete: if isWorkspaceOwner(resource.data.workspaceId);
+    }
+
+    match /settings/{workspaceId} {
+      allow read: if isWorkspaceMember(workspaceId);
+      // CREATE happens inside workspaceService.createWorkspace()'s
+      // transaction, in the same transaction that creates the
+      // workspaces/{workspaceId} doc itself — a rule that does
+      // get() on that sibling doc (isWorkspaceOwner) is not
+      // reliably evaluable there (the doc isn't guaranteed visible
+      // to rule evaluation within its own creating transaction, a
+      // known Firestore gotcha). Ownership at creation time is
+      // instead established by the self-consistency check below
+      // (the new doc's own workspaceId field must match the path);
+      // real ownership enforcement resumes for UPDATE/DELETE, which
+      // only ever happen later, standalone, once the workspace doc
+      // is definitely committed.
+      allow create: if isSignedIn() && request.resource.data.workspaceId == workspaceId;
+      allow update, delete: if isWorkspaceOwner(workspaceId);
+    }
+
+    // Projects are a top-level collection carrying a `workspaceId`
+    // field (see lib/firebase/firestore.ts). Every rule below re-checks
+    // that field so a request can never read/write a project outside
+    // the caller's own workspace, independent of query-side filters.
+    match /projects/{projectId} {
+      allow read: if isWorkspaceMember(resource.data.workspaceId);
+      // Restricted to owner/admin/member — a viewer can see projects
+      // but not create them. (No "manager" role exists in this app's
+      // model; using the real MemberRole enum rather than inventing one.)
+      allow create: if isWorkspaceMemberWithRole(request.resource.data.workspaceId, ['owner', 'admin', 'member']);
+      allow update: if isWorkspaceMember(resource.data.workspaceId)
+        && request.resource.data.workspaceId == resource.data.workspaceId;
+      allow delete: if isWorkspaceMember(resource.data.workspaceId);
+    }
+
+    // Tasks mirror the `projects` access shape. Comments/attachments/
+    // activity are subcollections, so membership is re-checked via
+    // get() on the parent task rather than duplicating a workspaceId
+    // field on every subdocument.
+    match /tasks/{taskId} {
+      allow read: if isWorkspaceMember(resource.data.workspaceId);
+      allow create: if isWorkspaceMember(request.resource.data.workspaceId);
+      allow update: if isWorkspaceMember(resource.data.workspaceId)
+        && request.resource.data.workspaceId == resource.data.workspaceId;
+      allow delete: if isWorkspaceMember(resource.data.workspaceId);
+
+      function isParentTaskMember() {
+        return isWorkspaceMember(get(/databases/$(database)/documents/tasks/$(taskId)).data.workspaceId);
+      }
+
+      match /comments/{commentId} {
+        allow read, create: if isParentTaskMember();
+        allow update, delete: if isParentTaskMember()
+          && (resource.data.authorId == request.auth.uid || resource == null);
+      }
+
+      match /attachments/{attachmentId} {
+        allow read, create, update: if isParentTaskMember();
+        allow delete: if isParentTaskMember();
+      }
+
+      match /activity/{activityId} {
+        allow read, create: if isParentTaskMember();
+        allow update, delete: if false;
+      }
+    }
+
+    // Boards mirror the projects/tasks access shape. board_columns and
+    // board_preferences carry their own `workspaceId` field (rather than
+    // requiring a join through the parent board) so they can be
+    // queried and rule-checked directly.
+    match /boards/{boardId} {
+      allow read: if isWorkspaceMember(resource.data.workspaceId);
+      allow create: if isWorkspaceMember(request.resource.data.workspaceId);
+      allow update: if isWorkspaceMember(resource.data.workspaceId)
+        && request.resource.data.workspaceId == resource.data.workspaceId;
+      allow delete: if isWorkspaceMember(resource.data.workspaceId);
+
+      match /activity/{activityId} {
+        allow read, create: if isWorkspaceMember(get(/databases/$(database)/documents/boards/$(boardId)).data.workspaceId);
+        allow update, delete: if false;
+      }
+    }
+
+    match /board_columns/{columnId} {
+      allow read: if isWorkspaceMember(resource.data.workspaceId);
+      allow create: if isWorkspaceMember(request.resource.data.workspaceId);
+      allow update: if isWorkspaceMember(resource.data.workspaceId)
+        && request.resource.data.workspaceId == resource.data.workspaceId;
+      allow delete: if isWorkspaceMember(resource.data.workspaceId);
+    }
+
+    // Preferences are personal: any workspace member can read them
+    // (needed to resolve `${boardId}_${uid}` docs while listing), but
+    // only the owning user can write their own.
+    match /board_preferences/{preferenceId} {
+      allow read: if isWorkspaceMember(resource.data.workspaceId);
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // Files back the Files module AND the Creative Workspace — same
+    // collection, same rule, per creative-studio/[projectId]'s "one
+    // source of truth" requirement. Comments are a subcollection
+    // scoped to their parent file's workspace (isParentFileMember),
+    // mirroring tasks/{taskId}/comments above; only the comment's own
+    // author may edit/delete it (or resolve it — resolving is treated
+    // as an update any workspace member may make, since reviewers
+    // resolving someone else's comment is normal review workflow).
+    match /files/{fileId} {
+      allow read: if isWorkspaceMember(resource.data.workspaceId);
+      allow create: if isWorkspaceMember(request.resource.data.workspaceId);
+      allow update: if isWorkspaceMember(resource.data.workspaceId)
+        && request.resource.data.workspaceId == resource.data.workspaceId;
+      allow delete: if isWorkspaceMember(resource.data.workspaceId);
+
+      function isParentFileMember() {
+        return isWorkspaceMember(get(/databases/$(database)/documents/files/$(fileId)).data.workspaceId);
+      }
+
+      match /comments/{commentId} {
+        allow read, create: if isParentFileMember();
+        allow update: if isParentFileMember();
+        allow delete: if isParentFileMember()
+          && (resource.data.authorId == request.auth.uid);
+      }
+
+      // Drawn annotations (circle/rectangle/arrow/freehand/text) on
+      // the review canvas — sibling to comments, same parent-
+      // membership read/create gate, but no shared "resolve" concept
+      // the way comments have, so update/delete is author-only.
+      match /annotations/{annotationId} {
+        allow read, create: if isParentFileMember();
+        allow update, delete: if isParentFileMember()
+          && (resource.data.authorId == request.auth.uid);
+      }
+    }
+
+    // Any member can REQUEST a review (create), but deciding one
+    // (the only thing `update` is ever used for — see
+    // reviewService.decideReview, which is the sole updateDoc() call
+    // against this collection) is restricted to owner/admin, matching
+    // the same isWorkspaceMemberWithRole gate the UI uses (see
+    // useCurrentMemberRole.canApproveReviews) so a member/viewer can't
+    // approve their own — or anyone's — review by calling the SDK
+    // directly, bypassing the UI check.
+    match /reviews/{reviewId} {
+      allow read: if isWorkspaceMember(resource.data.workspaceId);
+      allow create: if isWorkspaceMember(request.resource.data.workspaceId);
+      allow update: if isWorkspaceMemberWithRole(resource.data.workspaceId, ['owner', 'admin'])
+        && request.resource.data.workspaceId == resource.data.workspaceId;
+      allow delete: if isWorkspaceMember(resource.data.workspaceId);
+    }
+
+    // Creative Stages — same top-level-collection-with-workspaceId(+projectId)
+    // access shape as files/reviews/tasks (see stage.types.ts for why
+    // this isn't nested under a projects/{id} doc).
+    match /stages/{stageId} {
+      allow read: if isWorkspaceMember(resource.data.workspaceId);
+      allow create: if isWorkspaceMember(request.resource.data.workspaceId);
+      allow update: if isWorkspaceMember(resource.data.workspaceId)
+        && request.resource.data.workspaceId == resource.data.workspaceId;
+      allow delete: if isWorkspaceMember(resource.data.workspaceId);
+    }
+
+    // Only owner/admin may create, update (resend/cancel), or delete
+    // invites — this used to allow ANY member, which let a plain
+    // member invite people or cancel/rewrite someone else's invite.
+    // An invitee who isn't a workspace member yet can still read and
+    // accept only the specific invite(s) addressed to their own
+    // verified auth email (see the read/update OR-clauses below) —
+    // that's how a brand-new user goes from "holds an invite link" to
+    // "is a real member" without ever needing broader access.
+    match /workspace_invites/{inviteId} {
+      allow read: if isWorkspaceMember(resource.data.workspaceId)
+        || (isSignedIn() && resource.data.email == request.auth.token.email);
+
+      // role is restricted to non-owner so an inviter can never grant
+      // Owner (or anything else) via an invite; workspaceId is
+      // re-checked against the caller's OWN membership so an
+      // owner/admin of workspace A can never create an invite that
+      // claims to belong to workspace B.
+      allow create: if isWorkspaceMemberWithRole(request.resource.data.workspaceId, ['owner', 'admin'])
+        && request.resource.data.role in ['admin', 'member', 'viewer'];
+
+      // Either an owner/admin managing the invite (resend/cancel), or
+      // the invitee themselves accepting it — which may ONLY flip
+      // status pending -> accepted and can never change which
+      // workspace/email/role the invite actually grants.
+      allow update: if isWorkspaceMemberWithRole(resource.data.workspaceId, ['owner', 'admin'])
+        || (isSignedIn()
+          && resource.data.email == request.auth.token.email
+          && resource.data.status == 'pending'
+          && request.resource.data.status == 'accepted'
+          && request.resource.data.workspaceId == resource.data.workspaceId
+          && request.resource.data.email == resource.data.email
+          && request.resource.data.role == resource.data.role);
+
+      allow delete: if isWorkspaceMemberWithRole(resource.data.workspaceId, ['owner', 'admin']);
+    }
+
+    // Custom-role definitions gate real permissions (see the Access
+    // Control settings page) — only owner/admin may create/edit/delete
+    // one. This used to allow ANY member, meaning a plain member could
+    // grant themselves or anyone else elevated permissions by editing
+    // a role's permissions array directly.
+    match /workspace_roles/{roleId} {
+      allow read: if isWorkspaceMember(resource.data.workspaceId);
+      allow create: if isWorkspaceMemberWithRole(request.resource.data.workspaceId, ['owner', 'admin']);
+      allow update: if isWorkspaceMemberWithRole(resource.data.workspaceId, ['owner', 'admin'])
+        && request.resource.data.workspaceId == resource.data.workspaceId;
+      allow delete: if isWorkspaceMemberWithRole(resource.data.workspaceId, ['owner', 'admin']);
+    }
+
+    // Append-only compliance trail: any member can create an entry
+    // (actions they themselves take), but nothing can be edited or
+    // deleted once written.
+    match /audit_logs/{logId} {
+      allow read: if isWorkspaceMember(resource.data.workspaceId);
+      allow create: if isWorkspaceMember(request.resource.data.workspaceId);
+      allow update, delete: if false;
+    }
+
+    // AI Studio generation history — same append-only shape as audit_logs.
+    match /ai_usage_logs/{logId} {
+      allow read: if isWorkspaceMember(resource.data.workspaceId);
+      allow create: if isWorkspaceMember(request.resource.data.workspaceId);
+      allow update, delete: if false;
+    }
+
+    // A workspace's own encrypted Gemini key (id = workspaceId). Only
+    // owner/admin may configure it — a plain member can never write
+    // here, matching "normal members cannot configure the API key".
+    // Read is open to any workspace member because what's actually
+    // readable is AES-256-GCM ciphertext, not the key itself — it's
+    // meaningless without SETTINGS_ENCRYPTION_KEY, which lives only in
+    // the server process (see lib/server/secretCrypto.ts) and is what
+    // the generate/test API routes need to decrypt it server-side on
+    // behalf of any member running a generation. A member "reading"
+    // this doc never recovers the real key from it.
+    // Doc id is `${workspaceId}_${provider}` (one key per provider per
+    // workspace, e.g. a Gemini key and an NVIDIA key at once). Most
+    // reads here are for a key that hasn't been configured YET (the
+    // doc doesn't exist), and `get()`ing a nonexistent doc makes
+    // `resource` null — so `resource.data.workspaceId` would throw
+    // and deny every such read. Deriving workspaceId from the doc id
+    // itself (`${workspaceId}_${provider}`, neither of which ever
+    // contains "_") sidesteps that: it's path data, always available
+    // whether or not the document exists.
+    match /ai_config/{configId} {
+      allow read: if isWorkspaceMember(configId.split('_')[0]);
+      allow create, update: if isWorkspaceMemberWithRole(request.resource.data.workspaceId, ['owner', 'admin'])
+        && request.resource.data.workspaceId == configId.split('_')[0];
+      allow delete: if isWorkspaceMemberWithRole(configId.split('_')[0], ['owner', 'admin']);
+    }
+  }
+}

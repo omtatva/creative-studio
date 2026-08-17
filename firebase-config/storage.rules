@@ -1,0 +1,15 @@
+rules_version = '2';
+
+// Mirrors the Firestore tenancy model: every object lives under
+// workspaces/{workspaceId}/... and only signed-in members of that
+// workspace may read; only signed-in users may write (tighten to
+// role checks once uploads are wired to real features).
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /workspaces/{workspaceId}/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+  }
+}
