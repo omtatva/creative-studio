@@ -122,9 +122,15 @@ export function AIStudioPanel() {
           </div>
 
           {error && (
-            <div className="flex items-start gap-2 rounded-theme border border-error/30 bg-error/5 px-3 py-2.5 text-sm text-error">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>{error}</span>
+            <div className="flex items-start justify-between gap-3 rounded-theme border border-error/30 bg-error/5 px-3 py-2.5 text-sm text-error">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+              <Button size="sm" variant="outline" onClick={handleGenerate} isLoading={isGenerating} className="shrink-0">
+                <RefreshCw className="h-3.5 w-3.5" />
+                Retry
+              </Button>
             </div>
           )}
         </div>

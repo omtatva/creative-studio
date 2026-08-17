@@ -34,8 +34,12 @@ export function StringListEditor({ items, onChange, placeholder }: StringListEdi
   function move(index: number, direction: -1 | 1) {
     const target = index + direction;
     if (target < 0 || target >= items.length) return;
+    const current = items[index];
+    const swapWith = items[target];
+    if (current === undefined || swapWith === undefined) return;
     const next = [...items];
-    [next[index], next[target]] = [next[target], next[index]];
+    next[index] = swapWith;
+    next[target] = current;
     onChange(next);
   }
 

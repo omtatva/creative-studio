@@ -32,11 +32,11 @@ interface OptionListEditorProps<T extends ColorLabelOption> {
 export function OptionListEditor<T extends ColorLabelOption>({ items, colors, onCreate, onUpdate, onDelete, minItems = 1 }: OptionListEditorProps<T>) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState("");
-  const [editColor, setEditColor] = useState(colors[0]);
+  const [editColor, setEditColor] = useState(colors[0] ?? "");
 
   const [isAdding, setIsAdding] = useState(false);
   const [newLabel, setNewLabel] = useState("");
-  const [newColor, setNewColor] = useState(colors[0]);
+  const [newColor, setNewColor] = useState(colors[0] ?? "");
 
   function startEdit(item: T) {
     setEditingId(item.id);
@@ -54,7 +54,7 @@ export function OptionListEditor<T extends ColorLabelOption>({ items, colors, on
     if (!newLabel.trim()) return;
     onCreate(newLabel.trim(), newColor);
     setNewLabel("");
-    setNewColor(colors[0]);
+    setNewColor(colors[0] ?? "");
     setIsAdding(false);
   }
 

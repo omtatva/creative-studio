@@ -18,6 +18,7 @@ import { getFile } from "@/services/fileService";
 import { ROUTES, projectRoute, fileReviewRoute } from "@/lib/constants/routes";
 import { TaskFormValues } from "@/lib/validations/task.schema";
 import { ProjectFile } from "@/types/file.types";
+import { Task } from "@/types/task.types";
 
 /** When a task was created via "Create task" from a Creative Workspace asset/comment, link back to it — a one-time (non-realtime) lookup since it's just a reference, not something this header needs to live-update on. */
 function SourceAssetLink({ sourceFileId }: { sourceFileId: string }) {
@@ -57,7 +58,7 @@ export function TaskDetailsHeader() {
   const status = options.statuses.find((s) => s.id === task.statusId);
   const priority = options.priorities.find((p) => p.id === task.priorityId);
 
-  async function handleFormSubmit(values: TaskFormValues & { projectId: string; assignee: typeof task.assignee }) {
+  async function handleFormSubmit(values: TaskFormValues & { projectId: string; assignee: Task["assignee"] }) {
     await actions.update(task!.id, {
       title: values.title,
       descriptionHtml: values.descriptionHtml,

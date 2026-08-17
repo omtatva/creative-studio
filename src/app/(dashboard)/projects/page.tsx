@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
@@ -25,7 +25,7 @@ import { CreateWorkspaceModal } from "@/components/workspace/CreateWorkspaceModa
 import { NoWorkspaceState } from "@/components/workspace/NoWorkspaceState";
 import { ROUTES } from "@/lib/constants/routes";
 
-export default function ProjectsPage() {
+function ProjectsPageContent() {
   const { firebaseUser } = useAuthContext();
   // USER → WORKSPACE → PROJECT: a project can never exist without an
   // active workspace. If there isn't one, this page shows
@@ -311,5 +311,13 @@ export default function ProjectsPage() {
         isSubmitting={actions.isSubmitting}
       />
     </div>
+  );
+}
+
+export default function ProjectsPage() {
+  return (
+    <Suspense fallback={null}>
+      <ProjectsPageContent />
+    </Suspense>
   );
 }

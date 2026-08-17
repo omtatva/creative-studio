@@ -16,6 +16,7 @@ import { useToast } from "@/hooks/useToast";
 import { updateRole } from "@/services/roleService";
 import { DEFAULT_SIDEBAR_CONFIG, DEFAULT_FIELD_SECURITY_SETTINGS } from "@/lib/constants/settingsDefaults";
 import { SidebarConfigSettings, FieldSecuritySettings } from "@/types/settings.types";
+import { TaskActor } from "@/types/task.types";
 
 const WIDGET_LABELS: Record<string, string> = {
   welcomeBanner: "Welcome banner", analyticsCards: "Analytics cards", recentProjects: "Recent projects",
@@ -45,7 +46,16 @@ export default function AccessControlPage() {
   const { roles, isLoading: isLoadingRoles } = useCustomRoles();
   const { settings, isLoading: isLoadingSettings, save } = useWorkspaceSettings();
   const { canManageWorkspace, isLoading: isLoadingRole } = useCurrentMemberRole();
+  const { workspaceId } = useWorkspaceContext();
+  const { firebaseUser, profile } = useAuthContext();
   const toast = useToast();
+
+  const actor: TaskActor = {
+    uid: firebaseUser?.uid ?? "",
+    displayName: profile?.displayName ?? firebaseUser?.displayName ?? "Unknown",
+    photoURL: profile?.photoURL ?? firebaseUser?.photoURL ?? null,
+    email: profile?.email ?? firebaseUser?.email ?? "",
+  };
 
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [sidebarDraft, setSidebarDraft] = useState<SidebarConfigSettings>(DEFAULT_SIDEBAR_CONFIG);
@@ -53,7 +63,7 @@ export default function AccessControlPage() {
   const [isSavingSidebar, setIsSavingSidebar] = useState(false);
 
   useEffect(() => {
-    if (roles.length > 0 && !selectedRoleId) setSelectedRoleId(roles[0].id);
+    if (roles.length > 0 && !selectedRoleId) setSelectedRoleId(roles[0]?.id ?? null);
   }, [roles, selectedRoleId]);
 
   useEffect(() => {
@@ -66,23 +76,25 @@ export default function AccessControlPage() {
   const selectedRole = roles.find((r) => r.id === selectedRoleId) ?? null;
 
   async function handleTogglePermission(key: string) {
-    if (!selectedRole) return;
-    const next = selectedRole.permissions.includes(key)
-      ? selectedRole.permissions.filter((k) => k !== key)
-      : [...selectedRole.permissions, key];
+    if (!selectedRole || !workspaceId) return;
+    const previousPermissions = selectedRole.permissions;
+    const next = previousPermissions.includes(key)
+      ? previousPermissions.filter((k) => k !== key)
+      : [...previousPermissions, key];
     try {
-      await updateRole(selectedRole.id, { permissions: next });
+      await updateRole(workspaceId, selectedRole.id, { permissions: next }, actor, previousPermissions);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't update permission");
     }
   }
 
   async function handleToggleModule(moduleKeys: string[], grantAll: boolean) {
-    if (!selectedRole) return;
-    const withoutModule = selectedRole.permissions.filter((k) => !moduleKeys.includes(k));
+    if (!selectedRole || !workspaceId) return;
+    const previousPermissions = selectedRole.permissions;
+    const withoutModule = previousPermissions.filter((k) => !moduleKeys.includes(k));
     const next = grantAll ? [...withoutModule, ...moduleKeys] : withoutModule;
     try {
-      await updateRole(selectedRole.id, { permissions: next });
+      await updateRole(workspaceId, selectedRole.id, { permissions: next }, actor, previousPermissions);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't update permissions");
     }

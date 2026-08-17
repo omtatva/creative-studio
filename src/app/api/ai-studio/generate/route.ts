@@ -141,20 +141,39 @@ export async function POST(request: NextRequest) {
     } catch (err) {
       const status = err instanceof NvidiaApiError ? err.status : 502;
       const message = err instanceof Error ? err.message : "Generation failed for an unknown reason.";
-      console.error("[ai-studio/generate] NVIDIA call failed:", err);
+      console.error("[ai-studio/generate] NVIDIA call failed:", { status, message });
 
+      // 401/403/404/429/408(timeout)/5xx all map to a distinct, useful
+      // message — none of them leave the request hanging, since
+      // generateNvidiaText's own AbortController guarantees this
+      // catch is reached within REQUEST_TIMEOUT_MS no matter what.
       let friendlyMessage = `NVIDIA generation failed: ${message}`;
       let httpStatus = 502;
-      if (status === 401 || status === 403) {
+      if (status === 401) {
         httpStatus = 401;
         friendlyMessage =
           keySource === "workspace"
             ? "This workspace's NVIDIA API key was rejected. Ask an admin to update it in Settings > AI."
             : "The server's NVIDIA API key was rejected. Check NVIDIA_API_KEY in .env.local.";
-      } else if (status === 429) {
-        friendlyMessage = "NVIDIA generation failed: rate limited. Try again in a moment.";
+      } else if (status === 403) {
+        httpStatus = 403;
+        friendlyMessage = "This NVIDIA API key doesn't have permission to use this model. Check its access at build.nvidia.com.";
       } else if (status === 404) {
-        friendlyMessage = `NVIDIA generation failed: model "${resolvedModel}" isn't available for this key.`;
+        httpStatus = 404;
+        friendlyMessage = `NVIDIA generation failed: model "${resolvedModel}" wasn't found. Check the model ID in Settings > AI.`;
+      } else if (status === 429) {
+        httpStatus = 429;
+        friendlyMessage = "NVIDIA generation failed: rate limited. Try again in a moment.";
+      } else if (status === 408) {
+        httpStatus = 504;
+        // Use the real thrown message here, not a generic one — it
+        // already distinguishes "no headers arrived" from "headers
+        // arrived but the body never finished", which is exactly the
+        // diagnostic difference that matters for tracing this down.
+        friendlyMessage = message;
+      } else if (status >= 500) {
+        httpStatus = 502;
+        friendlyMessage = "NVIDIA's servers had an error generating a response. Try again in a moment.";
       }
 
       return NextResponse.json({ error: friendlyMessage }, { status: httpStatus });

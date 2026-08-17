@@ -10,17 +10,19 @@ interface ImageUploadSlotProps {
   onUpload: (file: File) => void;
   isUploading?: boolean;
   aspect?: "square" | "wide";
+  disabled?: boolean;
 }
 
 /** One upload-with-preview slot — the same shape covers Branding's logo/favicon/login-background/dashboard-background, so it's written once. */
-export function ImageUploadSlot({ label, description, previewUrl, onUpload, isUploading, aspect = "square" }: ImageUploadSlotProps) {
+export function ImageUploadSlot({ label, description, previewUrl, onUpload, isUploading, aspect = "square", disabled }: ImageUploadSlotProps) {
   return (
     <div>
       <p className="mb-1.5 text-sm font-medium text-foreground">{label}</p>
       {description && <p className="mb-2 text-xs text-foreground-muted">{description}</p>}
       <label
         className={cn(
-          "relative flex cursor-pointer items-center justify-center overflow-hidden rounded-theme border border-dashed border-border bg-surface-muted hover:bg-surface-muted/70",
+          "relative flex items-center justify-center overflow-hidden rounded-theme border border-dashed border-border bg-surface-muted",
+          disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer hover:bg-surface-muted/70",
           aspect === "square" ? "h-24 w-24" : "h-28 w-full"
         )}
       >
@@ -35,6 +37,7 @@ export function ImageUploadSlot({ label, description, previewUrl, onUpload, isUp
           type="file"
           accept="image/*"
           className="hidden"
+          disabled={disabled}
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (file) onUpload(file);

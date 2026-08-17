@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, KeyRound, ShieldCheck } from "lucide-react";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { Input } from "@/components/ui/Input";
@@ -40,13 +40,25 @@ export default function AISettingsPage() {
   const { canManageWorkspace } = useCurrentMemberRole();
   const toast = useToast();
   const [draft, setDraft] = useState<AISettings>(DEFAULT_AI_SETTINGS);
+  // Tracks which workspace `draft` was last seeded from Firestore for.
+  // Without this guard, the sync effect below re-runs on EVERY
+  // `settings` snapshot — including ones triggered by a totally
+  // unrelated field saving elsewhere (another Settings tab, another
+  // teammate) — which would silently overwrite an unsaved provider
+  // click back to whatever's still persisted, making the buttons look
+  // broken. Seeding once per workspace (then only re-seeding if the
+  // workspace itself changes) is what makes local clicks stick.
+  const seededForWorkspaceRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (!settings || !workspaceId) return;
+    if (seededForWorkspaceRef.current === workspaceId) return;
     // Spread defaults first: workspaces whose `settings.ai` doc predates a
     // newly-added field (e.g. ollamaBaseUrl) would otherwise carry that
     // field as undefined into the form instead of its real default.
-    if (settings) setDraft({ ...DEFAULT_AI_SETTINGS, ...settings.ai });
-  }, [settings]);
+    setDraft({ ...DEFAULT_AI_SETTINGS, ...settings.ai });
+    seededForWorkspaceRef.current = workspaceId;
+  }, [settings, workspaceId]);
 
   async function handleSave() {
     try {
@@ -100,27 +112,19 @@ export default function AISettingsPage() {
         )}
       </SettingsSection>
 
-      {SUPPORTED_PROVIDERS.map((p) =>
-        p.requiresKey ? (
-          <ProviderApiKeySection
-            key={p.id}
-            provider={p.id}
-            label={p.label}
-            keyPlaceholder={p.keyPlaceholder!}
-            keyHint={p.keyHint!}
-            workspaceId={workspaceId}
-            canManageWorkspace={canManageWorkspace}
-            isActiveProvider={draft.provider === p.id}
-          />
-        ) : (
-          <OllamaConfigSection
-            key={p.id}
-            draft={draft}
-            setDraft={setDraft}
-            canManageWorkspace={canManageWorkspace}
-            isActiveProvider={draft.provider === p.id}
-          />
-        )
+      {/* Only the SELECTED provider's config renders — switching providers visibly swaps this whole section, not just a small pill highlight. A workspace's key for a provider it's not currently using stays saved in Firestore either way (see aiConfigService.ts), it's just not shown here until that provider is selected again. */}
+      {activeProviderMeta.requiresKey ? (
+        <ProviderApiKeySection
+          key={activeProviderMeta.id}
+          provider={activeProviderMeta.id}
+          label={activeProviderMeta.label}
+          keyPlaceholder={activeProviderMeta.keyPlaceholder!}
+          keyHint={activeProviderMeta.keyHint!}
+          workspaceId={workspaceId}
+          canManageWorkspace={canManageWorkspace}
+        />
+      ) : (
+        <OllamaConfigSection key={activeProviderMeta.id} draft={draft} setDraft={setDraft} canManageWorkspace={canManageWorkspace} />
       )}
 
       <SettingsSection
@@ -163,11 +167,10 @@ interface ProviderApiKeySectionProps {
   keyHint: string;
   workspaceId: string | null;
   canManageWorkspace: boolean;
-  isActiveProvider: boolean;
 }
 
-/** One provider's key config card — reused for Gemini and NVIDIA so both can be configured independently. */
-function ProviderApiKeySection({ provider, label, keyPlaceholder, keyHint, workspaceId, canManageWorkspace, isActiveProvider }: ProviderApiKeySectionProps) {
+/** One provider's key config card — reused for Gemini and NVIDIA. Only ever mounted for whichever provider is currently selected — see the "Provider" section above. */
+function ProviderApiKeySection({ provider, label, keyPlaceholder, keyHint, workspaceId, canManageWorkspace }: ProviderApiKeySectionProps) {
   const { firebaseUser, profile } = useAuthContext();
   const toast = useToast();
   const [keyConfig, setKeyConfig] = useState<WorkspaceAIConfig | null>(null);
@@ -226,10 +229,7 @@ function ProviderApiKeySection({ provider, label, keyPlaceholder, keyHint, works
   }
 
   return (
-    <SettingsSection
-      title={`${label} API key`}
-      description={isActiveProvider ? "Currently selected as the active provider." : undefined}
-    >
+    <SettingsSection title={`${label} API key`} description="Used by AI Studio while this provider is selected above.">
       {isLoadingKey ? (
         <Loader label="Loading..." />
       ) : (
@@ -309,7 +309,6 @@ interface OllamaConfigSectionProps {
   draft: AISettings;
   setDraft: (next: AISettings) => void;
   canManageWorkspace: boolean;
-  isActiveProvider: boolean;
 }
 
 /**
@@ -318,8 +317,9 @@ interface OllamaConfigSectionProps {
  * the server URL (not a secret, so it's saved in plain settings/{id}
  * rather than going through the encrypted ai_config flow the other
  * providers use) plus a real "Test Connection" that hits that server.
+ * Only ever mounted while Ollama is the selected provider.
  */
-function OllamaConfigSection({ draft, setDraft, canManageWorkspace, isActiveProvider }: OllamaConfigSectionProps) {
+function OllamaConfigSection({ draft, setDraft, canManageWorkspace }: OllamaConfigSectionProps) {
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
@@ -346,11 +346,7 @@ function OllamaConfigSection({ draft, setDraft, canManageWorkspace, isActiveProv
   }
 
   return (
-    <SettingsSection
-      title="Ollama"
-      description={isActiveProvider ? "Currently selected as the active provider." : undefined}
-      action={<Badge variant="success">Free — no API key</Badge>}
-    >
+    <SettingsSection title="Ollama" action={<Badge variant="success">Free — no API key</Badge>}>
       <div className="flex flex-col gap-3">
         <div className="flex items-start gap-2 text-xs text-foreground-muted">
           <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />

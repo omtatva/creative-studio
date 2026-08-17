@@ -194,7 +194,7 @@ export default function UsersSettingsPage() {
 
       {invitesError && (
         <div className="rounded-theme border border-error/30 bg-error/5 px-3 py-2.5 text-sm text-error">
-          Couldn't load pending invitations: {invitesError}
+          Couldn&apos;t load pending invitations: {invitesError}
         </div>
       )}
 

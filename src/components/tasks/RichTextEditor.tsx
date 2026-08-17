@@ -62,7 +62,7 @@ export function RichTextEditor({
     if (mentionCandidates) {
       const text = editorRef.current?.textContent ?? "";
       const match = text.match(/@([a-zA-Z0-9._-]*)$/);
-      setMentionQuery(match ? match[1] : null);
+      setMentionQuery(match ? (match[1] ?? "") : null);
     }
   }
 

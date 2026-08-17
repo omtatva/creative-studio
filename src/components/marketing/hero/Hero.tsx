@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowDown } from "lucide-react";
@@ -32,23 +32,10 @@ export function Hero() {
   const prefersReducedMotion = useReducedMotion();
   const [playVideo, setPlayVideo] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     setPlayVideo(shouldPlayVideo(prefersReducedMotion));
   }, [prefersReducedMotion]);
-
-  // Calling .play() ourselves (instead of relying on the `autoplay`
-  // attribute) lets us catch the AbortError browsers throw when the
-  // play() promise is still pending and the element gets removed —
-  // which happens harmlessly in dev under React 18 StrictMode's
-  // mount→unmount→remount cycle. Without this, that rejection surfaces
-  // as an unhandled console error even though playback ends up fine.
-  useEffect(() => {
-    if (!playVideo) return;
-    const video = videoRef.current;
-    video?.play().catch(() => {});
-  }, [playVideo]);
 
   function scrollToNext() {
     document.getElementById("workflow")?.scrollIntoView({ behavior: prefersReducedMotion ? "auto" : "smooth" });
@@ -61,7 +48,7 @@ export function Hero() {
 
       {playVideo && (
         <video
-          ref={videoRef}
+          autoPlay
           muted
           loop
           playsInline

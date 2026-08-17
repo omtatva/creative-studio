@@ -97,21 +97,34 @@ export async function runGeneration({ workspaceId, projectId, requestedBy, aiSet
     const workspaceConfig =
       aiSettings.provider === "ollama" ? null : await getWorkspaceAIConfig(workspaceId, aiSettings.provider).catch(() => null);
 
-    const response = await fetch("/api/ai-studio/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        provider: aiSettings.provider,
-        model: aiSettings.defaultModel,
-        temperature: aiSettings.temperature,
-        maxTokens: aiSettings.maxTokens,
-        prompt,
-        ollamaBaseUrl: aiSettings.provider === "ollama" ? aiSettings.ollamaBaseUrl : undefined,
-        workspaceKey: workspaceConfig
-          ? { ciphertext: workspaceConfig.ciphertext, iv: workspaceConfig.iv, authTag: workspaceConfig.authTag }
-          : undefined,
-      }),
-    });
+    // A client-side ceiling independent of the server's own per-provider
+    // timeout (see nvidiaClient.ts) — belt and suspenders, so "Generate"
+    // can never spin forever even if something upstream of that timeout
+    // misbehaves (e.g. the response itself never completes streaming
+    // back to the browser).
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45_000);
+    let response: Response;
+    try {
+      response = await fetch("/api/ai-studio/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: aiSettings.provider,
+          model: aiSettings.defaultModel,
+          temperature: aiSettings.temperature,
+          maxTokens: aiSettings.maxTokens,
+          prompt,
+          ollamaBaseUrl: aiSettings.provider === "ollama" ? aiSettings.ollamaBaseUrl : undefined,
+          workspaceKey: workspaceConfig
+            ? { ciphertext: workspaceConfig.ciphertext, iv: workspaceConfig.iv, authTag: workspaceConfig.authTag }
+            : undefined,
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     const data = await response.json();
 
@@ -133,7 +146,12 @@ export async function runGeneration({ workspaceId, projectId, requestedBy, aiSet
     return { text: data.text as string };
   } catch (err) {
     if (err instanceof AIGenerationError) throw err;
-    const message = err instanceof Error ? err.message : "Could not reach the generation service.";
+    const isTimeout = err instanceof Error && err.name === "AbortError";
+    const message = isTimeout
+      ? "The request took too long and was cancelled. Try again."
+      : err instanceof Error
+        ? err.message
+        : "Could not reach the generation service.";
     await writeLog(logRef, baseLog, { status: "failed", resultText: null, errorMessage: message });
     throw new AIGenerationError(message);
   }

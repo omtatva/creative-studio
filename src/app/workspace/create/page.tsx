@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import { CreateWorkspaceForm } from "@/components/workspace/CreateWorkspaceForm";
@@ -16,7 +17,7 @@ import type { WorkspacePlan } from "@/types/workspace.types";
  * CreateWorkspaceModal — see CreateWorkspaceForm — just in this
  * page's existing chrome instead of a modal.
  */
-export default function CreateWorkspacePage() {
+function CreateWorkspacePageContent() {
   const { workspaceId: existingWorkspaceId } = useWorkspaceContext();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -30,7 +31,7 @@ export default function CreateWorkspacePage() {
           <h1 className="text-xl font-semibold text-foreground">
             {existingWorkspaceId ? "Create a new workspace" : "Set up your workspace"}
           </h1>
-          <p className="mt-1 text-sm text-foreground-muted">This is where your team's projects will live.</p>
+          <p className="mt-1 text-sm text-foreground-muted">This is where your team&apos;s projects will live.</p>
         </div>
 
         <Card>
@@ -43,5 +44,13 @@ export default function CreateWorkspacePage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+export default function CreateWorkspacePage() {
+  return (
+    <Suspense fallback={null}>
+      <CreateWorkspacePageContent />
+    </Suspense>
   );
 }

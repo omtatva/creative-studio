@@ -1,4 +1,4 @@
-import { addDoc, getDocs, limit as fbLimit, orderBy, query, serverTimestamp, where } from "firebase/firestore";
+import { doc, getDocs, limit as fbLimit, orderBy, query, serverTimestamp, setDoc, where } from "firebase/firestore";
 import { auditLogsCol } from "@/lib/firebase/firestore";
 import { AuditAction, AuditLogEntry } from "@/types/audit.types";
 import { TaskActor } from "@/types/task.types";
@@ -21,7 +21,9 @@ interface LogAuditArgs {
  * a server request context (see audit.types.ts for the full note).
  */
 export async function logAudit({ workspaceId, actor, action, targetType, targetId, previousValue, newValue }: LogAuditArgs): Promise<void> {
-  const entry: Omit<AuditLogEntry, "id" | "createdAt" | "updatedAt"> = {
+  const docRef = doc(auditLogsCol());
+  const entry: Omit<AuditLogEntry, "createdAt" | "updatedAt"> = {
+    id: docRef.id,
     workspaceId,
     userId: actor.uid,
     userName: actor.displayName,
@@ -34,7 +36,7 @@ export async function logAudit({ workspaceId, actor, action, targetType, targetI
     newValue: newValue !== undefined ? JSON.stringify(newValue) : null,
   };
 
-  await addDoc(auditLogsCol(), { ...entry, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+  await setDoc(docRef, { ...entry, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
 }
 
 export async function getAuditLogs(workspaceId: string, take = 100): Promise<AuditLogEntry[]> {

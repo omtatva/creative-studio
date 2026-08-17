@@ -91,7 +91,12 @@ service cloud.firestore {
     match /workspaces/{workspaceId} {
       allow read: if isWorkspaceMember(workspaceId);
       allow create: if isSignedIn();
-      allow update, delete: if isWorkspaceOwner(workspaceId);
+      // Profile fields (name, logo, timezone, ...) are editable by
+      // owner OR admin, matching every other "manage this workspace"
+      // action in this app (settings, members, roles). Deleting the
+      // whole workspace stays owner-only — that one's irreversible.
+      allow update: if isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin']);
+      allow delete: if isWorkspaceOwner(workspaceId);
 
       match /activity_logs/{logId} {
         allow read: if isWorkspaceMember(workspaceId);
@@ -138,7 +143,18 @@ service cloud.firestore {
           || (request.resource.data.role != 'owner' && isValidInviteAccept(request.resource.data))
         );
 
-      allow update, delete: if isWorkspaceOwner(resource.data.workspaceId);
+      // Admin can manage (change role, remove) any member EXCEPT the
+      // owner's own doc, and can never grant/hold the 'owner' role
+      // itself — closes off privilege escalation (an admin demoting,
+      // deleting, or overwriting the actual owner, or promoting
+      // someone — including themselves — to owner). Only the real
+      // owner can touch an owner-role doc or hand out 'owner'.
+      allow update: if isWorkspaceOwner(resource.data.workspaceId)
+        || (isWorkspaceMemberWithRole(resource.data.workspaceId, ['admin'])
+          && resource.data.role != 'owner'
+          && request.resource.data.role != 'owner');
+      allow delete: if isWorkspaceOwner(resource.data.workspaceId)
+        || (isWorkspaceMemberWithRole(resource.data.workspaceId, ['admin']) && resource.data.role != 'owner');
     }
 
     match /settings/{workspaceId} {
@@ -151,12 +167,17 @@ service cloud.firestore {
       // to rule evaluation within its own creating transaction, a
       // known Firestore gotcha). Ownership at creation time is
       // instead established by the self-consistency check below
-      // (the new doc's own workspaceId field must match the path);
-      // real ownership enforcement resumes for UPDATE/DELETE, which
-      // only ever happen later, standalone, once the workspace doc
-      // is definitely committed.
+      // (the new doc's own workspaceId field must match the path).
+      // UPDATE is owner OR admin — this doc is every Settings
+      // sub-page's save target (Branding, Workspace profile, AI,
+      // Theme, ...), and the client already treats admin as able to
+      // manage all of those (canManageWorkspace) — requiring literal
+      // ownership here silently blocked every admin's save with a
+      // permission-denied error the UI could only surface as a toast.
+      // DELETE stays owner-only (no real UI path deletes this doc).
       allow create: if isSignedIn() && request.resource.data.workspaceId == workspaceId;
-      allow update, delete: if isWorkspaceOwner(workspaceId);
+      allow update: if isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin']);
+      allow delete: if isWorkspaceOwner(workspaceId);
     }
 
     // Projects are a top-level collection carrying a `workspaceId`

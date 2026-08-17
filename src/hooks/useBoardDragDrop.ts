@@ -62,12 +62,13 @@ export function useBoardDragDrop({ boardId, tasksByStatus }: UseBoardDragDropArg
       .map((id) => Object.values(tasksByStatus).flat().find((t) => t.id === id))
       .filter((t): t is Task => Boolean(t));
 
-    if (allDragged.length === 0) {
+    const firstDragged = allDragged[0];
+    if (!firstDragged) {
       handleDragEnd();
       return;
     }
 
-    const sourceStatusId = allDragged[0].statusId;
+    const sourceStatusId = firstDragged.statusId;
     const crossColumn = sourceStatusId !== targetStatus.id;
 
     if (isMultiDrag && crossColumn) {
@@ -79,8 +80,8 @@ export function useBoardDragDrop({ boardId, tasksByStatus }: UseBoardDragDropArg
     }
 
     if (crossColumn) {
-      await taskActions.changeStatus(allDragged[0].id, targetStatus);
-      await boardActions.logTaskMoved(boardId, `moved "${allDragged[0].title}" to "${targetStatus.label}"`);
+      await taskActions.changeStatus(firstDragged.id, targetStatus);
+      await boardActions.logTaskMoved(boardId, `moved "${firstDragged.title}" to "${targetStatus.label}"`);
     }
 
     // Recompute sequential order for the destination column with the dragged task(s) inserted at dropIndex.
@@ -89,7 +90,7 @@ export function useBoardDragDrop({ boardId, tasksByStatus }: UseBoardDragDropArg
 
     await Promise.all(reordered.map((t, index) => taskActions.reorderInColumn(t.id, (index + 1) * 1000)));
     if (!crossColumn) {
-      await boardActions.logTaskReordered(boardId, `reordered "${allDragged[0].title}"`);
+      await boardActions.logTaskReordered(boardId, `reordered "${firstDragged.title}"`);
     }
 
     handleDragEnd();

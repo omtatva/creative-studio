@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
@@ -12,7 +13,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { signupSchema, type SignupFormValues } from "@/lib/validations/auth.schema";
 import { ROUTES } from "@/lib/constants/routes";
 
-export default function SignupPage() {
+function SignupPageContent() {
   const { signup, isSubmitting, error } = useAuth();
   const searchParams = useSearchParams();
   const planParam = searchParams.get("plan");
@@ -59,5 +60,13 @@ export default function SignupPage() {
         </Link>
       </p>
     </AuthLayout>
+  );
+}
+
+export default function SignupPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignupPageContent />
+    </Suspense>
   );
 }

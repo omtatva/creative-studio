@@ -464,7 +464,7 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
           archiveTarget && (
             <div className="flex flex-col gap-3">
               <p>
-                "{archiveTarget.name}" contains {stageAssetCount(archiveTarget.id)} asset{stageAssetCount(archiveTarget.id) === 1 ? "" : "s"}.
+                &quot;{archiveTarget.name}&quot; contains {stageAssetCount(archiveTarget.id)} asset{stageAssetCount(archiveTarget.id) === 1 ? "" : "s"}.
                 Archiving it hides it from the stage list — move its assets to another stage first so nothing becomes hard to find.
               </p>
               {stages.filter((s) => s.id !== archiveTarget.id).length > 0 ? (
@@ -475,14 +475,14 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
                     onChange={(e) => setMoveToStageId(e.target.value)}
                     className="h-9 rounded-theme border border-border bg-surface px-2.5 text-sm font-normal text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
                   >
-                    <option value="">Don't move — archive anyway</option>
+                    <option value="">Don&apos;t move — archive anyway</option>
                     {stages.filter((s) => s.id !== archiveTarget.id).map((s) => (
                       <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
                   </select>
                 </label>
               ) : (
-                <p className="text-xs text-foreground-muted">There's no other stage to move them to yet — archiving will leave them in this archived stage.</p>
+                <p className="text-xs text-foreground-muted">There&apos;s no other stage to move them to yet — archiving will leave them in this archived stage.</p>
               )}
             </div>
           )

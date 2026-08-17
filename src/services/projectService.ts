@@ -88,7 +88,7 @@ export async function createProject({ workspaceId, owner, payload }: CreateProje
   // exact payload being written so a bad value is visible immediately.
   const sanitizedProject = Object.fromEntries(
     Object.entries(project).filter(([, value]) => value !== undefined)
-  );
+  ) as Omit<Project, "createdAt" | "updatedAt">;
   const droppedFields = Object.keys(project).filter((key) => (project as Record<string, unknown>)[key] === undefined);
   if (droppedFields.length > 0) {
     console.warn("[projectService.createProject] dropped undefined fields before write:", droppedFields);

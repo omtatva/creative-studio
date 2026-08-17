@@ -24,7 +24,7 @@ interface TaskStatusListEditorProps {
  */
 export function TaskStatusListEditor({ items, colors, onCreate, onUpdate, onDelete }: TaskStatusListEditorProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Omit<TaskStatusOption, "id">>({ label: "", color: colors[0], icon: STATUS_ICON_KEYS[0], isCompletedStatus: false });
+  const [draft, setDraft] = useState<Omit<TaskStatusOption, "id">>({ label: "", color: colors[0] ?? "", icon: STATUS_ICON_KEYS[0] ?? "circle", isCompletedStatus: false });
   const [isAdding, setIsAdding] = useState(false);
 
   function startEdit(item: TaskStatusOption) {
@@ -33,7 +33,7 @@ export function TaskStatusListEditor({ items, colors, onCreate, onUpdate, onDele
   }
 
   function resetDraft() {
-    setDraft({ label: "", color: colors[0], icon: STATUS_ICON_KEYS[0], isCompletedStatus: false });
+    setDraft({ label: "", color: colors[0] ?? "", icon: STATUS_ICON_KEYS[0] ?? "circle", isCompletedStatus: false });
   }
 
   function renderForm(onSave: () => void, onCancel: () => void) {
@@ -58,7 +58,7 @@ export function TaskStatusListEditor({ items, colors, onCreate, onUpdate, onDele
         </div>
         <label className="flex items-center gap-2 text-xs text-foreground-muted">
           <input type="checkbox" checked={draft.isCompletedStatus} onChange={(e) => setDraft({ ...draft, isCompletedStatus: e.target.checked })} className="accent-primary" />
-          Counts as "completed" (drives progress bars)
+          Counts as &quot;completed&quot; (drives progress bars)
         </label>
         <div className="flex justify-end gap-2">
           <Button size="sm" variant="outline" onClick={onCancel}><X className="h-3.5 w-3.5" /></Button>

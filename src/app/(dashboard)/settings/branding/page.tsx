@@ -13,6 +13,7 @@ import { Loader } from "@/components/ui/Loader";
 import { useWorkspaceSettings } from "@/hooks/useWorkspaceSettings";
 import { useTheme } from "@/hooks/useTheme";
 import { useToast } from "@/hooks/useToast";
+import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
 import { uploadBrandingAsset } from "@/services/brandingService";
 import { saveNamedPalette, deleteNamedPalette } from "@/services/themePaletteService";
 import { DEFAULT_BRANDING_SETTINGS } from "@/lib/constants/settingsDefaults";
@@ -32,6 +33,7 @@ export default function BrandingSettingsPage() {
   const { settings, isLoading, workspaceId } = useWorkspaceSettings();
   const { theme, setTheme } = useTheme();
   const toast = useToast();
+  const { canManageWorkspace } = useCurrentMemberRole();
 
   const [uploadingField, setUploadingField] = useState<string | null>(null);
   const [draftColors, setDraftColors] = useState<ColorRoles>(DEFAULT_COLOR_ROLES);
@@ -129,10 +131,13 @@ export default function BrandingSettingsPage() {
         <p className="mt-1 text-sm text-foreground-muted">Logo, favicon, backgrounds, and your full brand color system.</p>
       </div>
 
-      <SettingsSection title="Images">
+      <SettingsSection
+        title="Images"
+        description={!canManageWorkspace ? "Only workspace owners and admins can change these." : undefined}
+      >
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <ImageUploadSlot label="Logo" previewUrl={branding.logoUrl} isUploading={uploadingField === "logoUrl"} onUpload={(f) => handleUpload("logoUrl", f)} />
-          <ImageUploadSlot label="Favicon" previewUrl={branding.faviconUrl} isUploading={uploadingField === "faviconUrl"} onUpload={(f) => handleUpload("faviconUrl", f)} />
+          <ImageUploadSlot label="Logo" previewUrl={branding.logoUrl} isUploading={uploadingField === "logoUrl"} onUpload={(f) => handleUpload("logoUrl", f)} disabled={!canManageWorkspace} />
+          <ImageUploadSlot label="Favicon" previewUrl={branding.faviconUrl} isUploading={uploadingField === "faviconUrl"} onUpload={(f) => handleUpload("faviconUrl", f)} disabled={!canManageWorkspace} />
         </div>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <ImageUploadSlot
@@ -142,6 +147,7 @@ export default function BrandingSettingsPage() {
             previewUrl={branding.loginBackgroundUrl}
             isUploading={uploadingField === "loginBackgroundUrl"}
             onUpload={(f) => handleUpload("loginBackgroundUrl", f)}
+            disabled={!canManageWorkspace}
           />
           <ImageUploadSlot
             label="Dashboard background"
@@ -150,6 +156,7 @@ export default function BrandingSettingsPage() {
             previewUrl={branding.dashboardBackgroundUrl}
             isUploading={uploadingField === "dashboardBackgroundUrl"}
             onUpload={(f) => handleUpload("dashboardBackgroundUrl", f)}
+            disabled={!canManageWorkspace}
           />
         </div>
       </SettingsSection>
@@ -162,16 +169,18 @@ export default function BrandingSettingsPage() {
         title="Brand colors"
         description="Unlimited custom colors — click any swatch for the full picker (HEX, RGB, HSL, and opacity)."
         action={
-          <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={handleResetToDefault} isLoading={isSaving}>
-              <RotateCcw className="h-4 w-4" />
-              Reset to Default
-            </Button>
-            <Button size="sm" onClick={handleSaveTheme} isLoading={isSaving} disabled={!isDirty}>
-              <Save className="h-4 w-4" />
-              Save Theme
-            </Button>
-          </div>
+          canManageWorkspace && (
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={handleResetToDefault} isLoading={isSaving}>
+                <RotateCcw className="h-4 w-4" />
+                Reset to Default
+              </Button>
+              <Button size="sm" onClick={handleSaveTheme} isLoading={isSaving} disabled={!isDirty}>
+                <Save className="h-4 w-4" />
+                Save Theme
+              </Button>
+            </div>
+          )
         }
       >
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

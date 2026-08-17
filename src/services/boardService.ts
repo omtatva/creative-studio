@@ -15,8 +15,8 @@ import { Board, BoardActor, BoardBackground, BoardAutoSortField, BoardCardSize }
 export async function getBoardForProject(workspaceId: string, projectId: string): Promise<Board | null> {
   const q = query(boardsCol(), where("workspaceId", "==", workspaceId), where("projectId", "==", projectId));
   const snapshot = await getDocs(q);
-  if (snapshot.empty) return null;
-  return snapshot.docs[0].data();
+  const first = snapshot.docs[0];
+  return first ? first.data() : null;
 }
 
 /**

@@ -54,6 +54,7 @@ export function TaskAttachmentsTab() {
         <div className="flex flex-col divide-y divide-border">
           {attachments.map((attachment) => {
             const current = attachment.versions[attachment.versions.length - 1];
+            if (!current) return null;
             const extension = attachment.fileName.split(".").pop()?.toLowerCase() ?? "";
             const isImage = IMAGE_EXTENSIONS.includes(extension);
             const isExpanded = expandedId === attachment.id;

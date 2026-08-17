@@ -27,8 +27,12 @@ export function PageAccessEditor({ items, onChange }: PageAccessEditorProps) {
   function move(index: number, direction: -1 | 1) {
     const target = index + direction;
     if (target < 0 || target >= sorted.length) return;
+    const current = sorted[index];
+    const swapWith = sorted[target];
+    if (!current || !swapWith) return;
     const reordered = [...sorted];
-    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    reordered[index] = swapWith;
+    reordered[target] = current;
     onChange(reordered.map((item, i) => ({ ...item, order: i })));
   }
 

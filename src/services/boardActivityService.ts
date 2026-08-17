@@ -1,4 +1,4 @@
-import { addDoc, getDocs, limit, orderBy, query, serverTimestamp } from "firebase/firestore";
+import { doc, getDocs, limit, orderBy, query, serverTimestamp, setDoc } from "firebase/firestore";
 import { boardActivityCol } from "@/lib/firebase/firestore";
 import { BoardActivityAction, BoardActor } from "@/types/board.types";
 
@@ -17,7 +17,9 @@ export async function logBoardActivity(
   action: BoardActivityAction,
   message: string
 ): Promise<void> {
-  await addDoc(boardActivityCol(boardId), {
+  const docRef = doc(boardActivityCol(boardId));
+  await setDoc(docRef, {
+    id: docRef.id,
     actor,
     action,
     message,
@@ -29,5 +31,5 @@ export async function logBoardActivity(
 export async function getBoardActivity(boardId: string, take = 50) {
   const q = query(boardActivityCol(boardId), orderBy("createdAt", "desc"), limit(take));
   const snapshot = await getDocs(q);
-  return snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+  return snapshot.docs.map((d) => d.data());
 }

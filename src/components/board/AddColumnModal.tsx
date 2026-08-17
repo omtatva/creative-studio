@@ -18,15 +18,15 @@ interface AddColumnModalProps {
 /** Creating a custom column adds a new TaskStatusOption to Settings AND a positioned BoardColumn — see boardColumnService.createCustomColumn. */
 export function AddColumnModal({ isOpen, onClose, onCreate, isSubmitting }: AddColumnModalProps) {
   const [label, setLabel] = useState("");
-  const [color, setColor] = useState(COLOR_PALETTE[0]);
-  const [icon, setIcon] = useState(STATUS_ICON_KEYS[0]);
+  const [color, setColor] = useState(COLOR_PALETTE[0] ?? "99 102 241");
+  const [icon, setIcon] = useState(STATUS_ICON_KEYS[0] ?? "circle");
 
   async function handleSubmit() {
     if (!label.trim()) return;
     await onCreate(label.trim(), color, icon);
     setLabel("");
-    setColor(COLOR_PALETTE[0]);
-    setIcon(STATUS_ICON_KEYS[0]);
+    setColor(COLOR_PALETTE[0] ?? "99 102 241");
+    setIcon(STATUS_ICON_KEYS[0] ?? "circle");
   }
 
   return (

@@ -106,7 +106,7 @@ export default function TasksPage() {
     <div className="flex flex-col gap-5">
       <div>
         <h1 className="text-xl font-semibold text-foreground">Tasks</h1>
-        <p className="mt-1 text-sm text-foreground-muted">Every task across your workspace's projects.</p>
+        <p className="mt-1 text-sm text-foreground-muted">Every task across your workspace&apos;s projects.</p>
       </div>
 
       <SectionTabs items={TASK_SECTIONS} active={section} onChange={setSection} counts={counts} />
