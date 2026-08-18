@@ -5,5 +5,16 @@
   },
   "storage": {
     "rules": "firebase-config/storage.rules"
+  },
+  "apphosting": {
+    "backendId": "creative-studio-backend",
+    "rootDir": "/",
+    "ignore": [
+      "node_modules",
+      ".git",
+      "firebase-debug.log",
+      "firebase-debug.*.log",
+      "functions"
+    ]
   }
 }

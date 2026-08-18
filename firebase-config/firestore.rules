@@ -416,5 +416,18 @@ service cloud.firestore {
         && request.resource.data.workspaceId == configId.split('_')[0];
       allow delete: if isWorkspaceMemberWithRole(configId.split('_')[0], ['owner', 'admin']);
     }
+
+    // A user's connected Gmail account (OAuth refresh token,
+    // encrypted — see gmail.types.ts) used to send workspace-invite
+    // emails from their own address. Deliberately denies ALL direct
+    // client access, in both directions: this doc is read/written
+    // exclusively by server routes (src/app/api/auth/google/*,
+    // /api/invites/send) via firebase-admin, which bypasses these
+    // rules entirely and independently verifies the caller's Firebase
+    // ID token before touching a UID's doc. The explicit `if false`
+    // here is defense-in-depth/self-documentation, not the real gate.
+    match /gmail_connections/{uid} {
+      allow read, write: if false;
+    }
   }
 }

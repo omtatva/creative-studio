@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Link2, RotateCw, UserPlus, X } from "lucide-react";
 import { SettingsSection } from "@/components/settings/SettingsSection";
+import { GmailConnectionSection } from "@/components/settings/GmailConnectionSection";
 import { InviteUserModal } from "@/components/settings/InviteUserModal";
 import { Button } from "@/components/ui/Button";
 import { Avatar } from "@/components/ui/Avatar";
@@ -191,6 +192,8 @@ export default function UsersSettingsPage() {
           </Button>
         )}
       </div>
+
+      <GmailConnectionSection />
 
       {invitesError && (
         <div className="rounded-theme border border-error/30 bg-error/5 px-3 py-2.5 text-sm text-error">

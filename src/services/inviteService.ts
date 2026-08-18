@@ -1,5 +1,5 @@
 import { doc, getDoc, getDocs, orderBy, query, serverTimestamp, setDoc, updateDoc, where, writeBatch } from "firebase/firestore";
-import { db } from "@/lib/firebase/config";
+import { auth, db } from "@/lib/firebase/config";
 import { workspaceInvitesCol, workspaceInviteDoc, memberDoc } from "@/lib/firebase/firestore";
 import { logActivity } from "@/services/activityService";
 import { WorkspaceInvite, Member } from "@/types/workspace.types";
@@ -91,18 +91,27 @@ export async function getInviteById(inviteId: string): Promise<WorkspaceInvite |
 }
 
 /**
- * Calls the server-side Resend proxy (src/app/api/invites/send/route.ts)
- * to actually deliver the invitation email — the Resend API key never
- * reaches this client code. Returns an error string on failure instead
- * of throwing, so the caller can show "invite created, but email
- * failed to send" rather than a generic crash — the invite itself
- * stays valid (and shareable via copy-link) either way.
+ * Calls the server-side Gmail proxy (src/app/api/invites/send/route.ts)
+ * to actually deliver the invitation email FROM the caller's own
+ * connected Gmail account — see gmailConnectionService.ts. Attaches
+ * the caller's real Firebase ID token, which the route independently
+ * verifies before doing anything (never trusts a uid from the client)
+ * — see verifyRequestAuth in lib/server/firebaseAdmin.ts. Returns an
+ * error string on failure instead of throwing, so the caller can show
+ * "invite created, but email failed to send" rather than a generic
+ * crash — the invite itself stays valid (and shareable via copy-link)
+ * either way.
  */
 export async function sendInviteEmail(invite: Pick<WorkspaceInvite, "id" | "email" | "workspaceName" | "role" | "invitedByName" | "expiresAt">): Promise<{ ok: boolean; error: string | null }> {
   try {
+    const user = auth.currentUser;
+    if (!user) {
+      return { ok: false, error: "You must be signed in to send an invitation email." };
+    }
+    const idToken = await user.getIdToken();
     const response = await fetch("/api/invites/send", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
       body: JSON.stringify({
         inviteId: invite.id,
         email: invite.email,

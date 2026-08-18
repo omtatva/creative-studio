@@ -1,6 +1,6 @@
 {
   "projects": {
-    "default": "REPLACE_WITH_YOUR_FIREBASE_PROJECT_ID",
+    "default": "creative-studio-176c0",
     "creative-studio": "creative-studio-176c0"
   },
   "targets": {},
