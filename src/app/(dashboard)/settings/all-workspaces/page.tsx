@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Building2, MailWarning } from "lucide-react";
+import Link from "next/link";
+import { Building2, ChevronRight, MailWarning } from "lucide-react";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -14,6 +15,7 @@ import { isItSupportUser, IT_SUPPORT_EMAIL } from "@/lib/constants/itSupport";
 import { resendVerificationEmail } from "@/lib/firebase/auth";
 import { getWorkspaceMembers } from "@/services/userService";
 import { PLAN_DISPLAY_NAMES } from "@/lib/constants/planLimits";
+import { ROUTES } from "@/lib/constants/routes";
 import { formatDate } from "@/lib/utils/date";
 import { Workspace, Member } from "@/types/workspace.types";
 
@@ -121,7 +123,11 @@ export default function AllWorkspacesSettingsPage() {
         ) : (
           <div className="flex flex-col gap-2">
             {rows.map(({ workspace, owner, memberCount }) => (
-              <div key={workspace.id} className="flex flex-wrap items-center justify-between gap-3 rounded-theme border border-border bg-surface p-3">
+              <Link
+                key={workspace.id}
+                href={`${ROUTES.settingsAllWorkspaces}/${workspace.id}`}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-theme border border-border bg-surface p-3 transition-colors hover:bg-surface-muted"
+              >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <p className="truncate text-sm font-semibold text-foreground">{workspace.name}</p>
@@ -131,14 +137,17 @@ export default function AllWorkspacesSettingsPage() {
                     {workspace.companyName} · Created {formatDate(workspace.createdAt)}
                   </p>
                 </div>
-                <div className="text-right text-xs text-foreground-muted">
-                  <p className="text-foreground">{owner ? owner.displayName : "Unknown owner"}</p>
-                  <p>{owner?.email ?? workspace.ownerId}</p>
-                  <p>
-                    {memberCount} member{memberCount === 1 ? "" : "s"}
-                  </p>
+                <div className="flex items-center gap-3">
+                  <div className="text-right text-xs text-foreground-muted">
+                    <p className="text-foreground">{owner ? owner.displayName : "Unknown owner"}</p>
+                    <p>{owner?.email ?? workspace.ownerId}</p>
+                    <p>
+                      {memberCount} member{memberCount === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-foreground-muted" />
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         )}

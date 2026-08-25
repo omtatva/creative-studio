@@ -225,9 +225,13 @@ service cloud.firestore {
       // Profile fields (name, logo, timezone, ...) are editable by
       // owner OR admin, matching every other "manage this workspace"
       // action in this app (settings, members, roles). Deleting the
-      // whole workspace stays owner-only — that one's irreversible.
+      // whole workspace is owner OR IT Support — see Settings > All
+      // Workspaces (IT-Support-only), where an admin can act on a
+      // workspace they don't personally belong to. Still real deletion
+      // (see deleteWorkspaceAccess in workspaceService.ts), not
+      // frontend-hidden — this is the actual enforcement.
       allow update: if isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin']);
-      allow delete: if isWorkspaceOwner(workspaceId);
+      allow delete: if isWorkspaceOwner(workspaceId) || isItSupport();
 
       match /activity_logs/{logId} {
         allow read: if isWorkspaceMember(workspaceId);
@@ -284,8 +288,14 @@ service cloud.firestore {
         || (isWorkspaceMemberWithRole(resource.data.workspaceId, ['admin'])
           && resource.data.role != 'owner'
           && request.resource.data.role != 'owner');
+      // isItSupport() added alongside the existing owner/admin paths so
+      // deleteWorkspaceAccess (see workspaceService.ts) can also remove
+      // every member doc — including the workspace's own owner's —
+      // when IT Support deletes a workspace it doesn't personally
+      // belong to from Settings > All Workspaces.
       allow delete: if isWorkspaceOwner(resource.data.workspaceId)
-        || (isWorkspaceMemberWithRole(resource.data.workspaceId, ['admin']) && resource.data.role != 'owner');
+        || (isWorkspaceMemberWithRole(resource.data.workspaceId, ['admin']) && resource.data.role != 'owner')
+        || isItSupport();
     }
 
     match /settings/{workspaceId} {
@@ -311,10 +321,11 @@ service cloud.firestore {
       // manage all of those (canManageWorkspace) — requiring literal
       // ownership here silently blocked every admin's save with a
       // permission-denied error the UI could only surface as a toast.
-      // DELETE stays owner-only (no real UI path deletes this doc).
+      // DELETE is owner or IT Support — deleteWorkspaceAccess removes
+      // this doc as part of a full workspace deletion (see above).
       allow create: if isSignedIn() && request.resource.data.workspaceId == workspaceId;
       allow update: if isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin']) || isItSupport();
-      allow delete: if isWorkspaceOwner(workspaceId);
+      allow delete: if isWorkspaceOwner(workspaceId) || isItSupport();
     }
 
     // Projects are a top-level collection carrying a `workspaceId`
