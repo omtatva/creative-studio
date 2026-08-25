@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, KeyRound, ShieldCheck } from "lucide-react";
+import { AlertTriangle, CheckCircle2, KeyRound, Pencil, ShieldCheck } from "lucide-react";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
@@ -13,6 +13,8 @@ import { useAuthContext } from "@/contexts/AuthContext";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
 import { useToast } from "@/hooks/useToast";
 import { getWorkspaceAIConfig, saveWorkspaceAIKey, testWorkspaceAIConnection } from "@/services/aiConfigService";
+import { checkWorkspaceLimit } from "@/services/planService";
+import { updateWorkspaceLimit } from "@/services/workspaceService";
 import { DEFAULT_AI_SETTINGS } from "@/lib/constants/settingsDefaults";
 import { AISettings, AIProvider } from "@/types/settings.types";
 import { WorkspaceAIConfig } from "@/types/aiConfig.types";
@@ -36,10 +38,55 @@ const SUPPORTED_PROVIDERS: { id: AIProvider; label: string; requiresKey: boolean
  */
 export default function AISettingsPage() {
   const { settings, isLoading, isSaving, save } = useWorkspaceSettings();
-  const { workspaceId } = useWorkspaceContext();
+  const { workspace, workspaceId } = useWorkspaceContext();
   const { canManageWorkspace } = useCurrentMemberRole();
   const toast = useToast();
   const [draft, setDraft] = useState<AISettings>(DEFAULT_AI_SETTINGS);
+
+  // Real per-workspace plan limit (see planService.ts / PlanUsageSection) —
+  // the monthly cap actually enforced before AI Studio lets a generation
+  // through, distinct from the generation DEFAULTS (model/temperature/
+  // tokens) configured further down this page.
+  const [planLimit, setPlanLimit] = useState<{ used: number; limit: number } | null>(null);
+  const [isEditingLimit, setIsEditingLimit] = useState(false);
+  const [limitUnlimited, setLimitUnlimited] = useState(false);
+  const [limitDraft, setLimitDraft] = useState("");
+  const [isSavingLimit, setIsSavingLimit] = useState(false);
+
+  useEffect(() => {
+    if (!workspace) return;
+    checkWorkspaceLimit(workspace, "aiGenerations")
+      .then((r) => setPlanLimit({ used: r.used, limit: r.limit }))
+      .catch((err) => console.error("[settings/ai] failed to load plan limit:", err));
+  }, [workspace]);
+
+  function startEditingLimit() {
+    if (!planLimit) return;
+    const unlimited = !Number.isFinite(planLimit.limit);
+    setLimitUnlimited(unlimited);
+    setLimitDraft(unlimited ? "" : String(planLimit.limit));
+    setIsEditingLimit(true);
+  }
+
+  async function saveLimit() {
+    if (!workspace) return;
+    const nextLimit = limitUnlimited ? Infinity : Number(limitDraft);
+    if (!limitUnlimited && (!Number.isFinite(nextLimit) || nextLimit < 1)) {
+      toast.error("Enter a number of 1 or more, or choose Unlimited.");
+      return;
+    }
+    setIsSavingLimit(true);
+    try {
+      await updateWorkspaceLimit(workspace.id, "maxAIRequestsPerMonth", nextLimit);
+      setPlanLimit((prev) => (prev ? { ...prev, limit: nextLimit } : prev));
+      toast.success("AI generations limit updated");
+      setIsEditingLimit(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't update the limit");
+    } finally {
+      setIsSavingLimit(false);
+    }
+  }
   // Tracks which workspace `draft` was last seeded from Firestore for.
   // Without this guard, the sync effect below re-runs on EVERY
   // `settings` snapshot — including ones triggered by a totally
@@ -79,6 +126,62 @@ export default function AISettingsPage() {
         <h1 className="text-xl font-semibold text-foreground">AI Settings</h1>
         <p className="mt-1 text-sm text-foreground-muted">Generation preferences for AI Studio.</p>
       </div>
+
+      <SettingsSection
+        title="Usage limit"
+        description="The real monthly cap enforced before a generation is allowed — see Settings > Workspace for every other plan limit."
+      >
+        {!planLimit ? (
+          <p className="text-xs text-foreground-muted">Loading...</p>
+        ) : (
+          <div>
+            <div className="mb-1 flex items-center justify-between text-xs">
+              <span className="flex items-center gap-1.5 text-foreground-muted">
+                AI generations this month
+                {canManageWorkspace && !isEditingLimit && (
+                  <button
+                    onClick={startEditingLimit}
+                    className="rounded-theme p-0.5 text-foreground-muted hover:bg-surface-muted hover:text-foreground"
+                    aria-label="Edit AI generations limit"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                )}
+              </span>
+              <span className="text-foreground-muted">
+                {planLimit.used} / {Number.isFinite(planLimit.limit) ? planLimit.limit : "Unlimited"}
+              </span>
+            </div>
+
+            {isEditingLimit && (
+              <div className="mt-2 flex flex-col gap-2 rounded-theme border border-border bg-surface-muted/60 p-2.5">
+                <label className="flex items-center gap-1.5 text-xs text-foreground">
+                  <input type="checkbox" checked={limitUnlimited} onChange={(e) => setLimitUnlimited(e.target.checked)} className="accent-primary" />
+                  Unlimited generations
+                </label>
+                {!limitUnlimited && (
+                  <input
+                    type="number"
+                    min={1}
+                    value={limitDraft}
+                    onChange={(e) => setLimitDraft(e.target.value)}
+                    placeholder="Max generations per month"
+                    className="h-8 w-full rounded-theme border border-border bg-surface px-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  />
+                )}
+                <div className="flex justify-end gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setIsEditingLimit(false)} disabled={isSavingLimit}>
+                    Cancel
+                  </Button>
+                  <Button size="sm" onClick={saveLimit} isLoading={isSavingLimit}>
+                    Save
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </SettingsSection>
 
       <SettingsSection title="Provider" description="Which provider AI Studio calls when a member generates something.">
         <div className="flex flex-col gap-2 sm:flex-row">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { UserPlus, Trash2 } from "lucide-react";
+import { UserPlus, Trash2, Search } from "lucide-react";
 import { Card, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
@@ -15,9 +15,18 @@ import { getWorkspaceMembers } from "@/services/userService";
 import { Member } from "@/types/workspace.types";
 import { ProjectMember, ProjectRole } from "@/types/project.types";
 
-const PROJECT_ROLES: ProjectRole[] = ["owner", "admin", "manager", "member"];
+const PROJECT_ROLES: ProjectRole[] = ["owner", "manager", "editor", "viewer"];
+const DEFAULT_INVITE_ROLE: ProjectRole = "editor";
 
-/** Invite from existing workspace members, remove, and reassign per-project roles. */
+/**
+ * Project Members tab — invite from EXISTING WORKSPACE members only
+ * (never an arbitrary user from another workspace: `eligibleMembers`
+ * is derived from `getWorkspaceMembers(workspaceId)`, the same
+ * workspace this project belongs to), remove, and reassign per-
+ * project roles. Every mutation goes through useProjectActions, which
+ * writes both the display array (project.members) AND the real
+ * project_members access-control record — see projectService.ts.
+ */
 export function ProjectMembersTab() {
   const { project } = useProjectDetailsContext();
   const { workspaceId } = useWorkspaceContext();
@@ -26,7 +35,10 @@ export function ProjectMembersTab() {
 
   const [workspaceMembers, setWorkspaceMembers] = useState<Member[]>([]);
   const [isInviteOpen, setIsInviteOpen] = useState(false);
-  const [selectedUid, setSelectedUid] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedUids, setSelectedUids] = useState<Set<string>>(new Set());
+  const [inviteRole, setInviteRole] = useState<ProjectRole>(DEFAULT_INVITE_ROLE);
+  const [isInviting, setIsInviting] = useState(false);
 
   useEffect(() => {
     if (!workspaceId) return;
@@ -41,25 +53,57 @@ export function ProjectMembersTab() {
     return workspaceMembers.filter((m) => !existingUids.has(m.userId));
   }, [workspaceMembers, project]);
 
+  const searchedEligibleMembers = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return eligibleMembers;
+    return eligibleMembers.filter((m) => m.displayName.toLowerCase().includes(q) || m.email.toLowerCase().includes(q));
+  }, [eligibleMembers, searchQuery]);
+
   if (!project) return null;
 
+  function toggleSelected(uid: string) {
+    setSelectedUids((prev) => {
+      const next = new Set(prev);
+      if (next.has(uid)) next.delete(uid);
+      else next.add(uid);
+      return next;
+    });
+  }
+
+  function closeInviteModal() {
+    setIsInviteOpen(false);
+    setSearchQuery("");
+    setSelectedUids(new Set());
+    setInviteRole(DEFAULT_INVITE_ROLE);
+  }
+
   async function handleInvite() {
-    const member = workspaceMembers.find((m) => m.userId === selectedUid);
-    if (!member) return;
-    const projectMember: ProjectMember = {
-      uid: member.userId,
-      displayName: member.displayName,
-      photoURL: member.photoURL,
-      email: member.email,
-      role: "member",
-    };
-    const result = await actions.addMember(project!.id, projectMember);
-    if (result.error === null) {
-      toast.success(`${member.displayName} added to project`);
-      setSelectedUid("");
-      setIsInviteOpen(false);
-    } else {
-      toast.error(result.error ?? "Couldn't add member. Please try again.");
+    const membersToAdd = workspaceMembers.filter((m) => selectedUids.has(m.userId));
+    if (membersToAdd.length === 0) return;
+    setIsInviting(true);
+    try {
+      let addedCount = 0;
+      for (const member of membersToAdd) {
+        const projectMember: ProjectMember = {
+          uid: member.userId,
+          displayName: member.displayName,
+          photoURL: member.photoURL,
+          email: member.email,
+          role: inviteRole,
+        };
+        const result = await actions.addMember(project!.id, projectMember);
+        if (result.error === null) {
+          addedCount += 1;
+        } else {
+          toast.error(`Couldn't add ${member.displayName}: ${result.error}`);
+        }
+      }
+      if (addedCount > 0) {
+        toast.success(addedCount === 1 ? "1 member added to project" : `${addedCount} members added to project`);
+        closeInviteModal();
+      }
+    } finally {
+      setIsInviting(false);
     }
   }
 
@@ -78,15 +122,15 @@ export function ProjectMembersTab() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Team Members</CardTitle>
+        <CardTitle>Project Members</CardTitle>
         <Button size="sm" onClick={() => setIsInviteOpen(true)} disabled={eligibleMembers.length === 0}>
           <UserPlus className="h-4 w-4" />
-          Invite
+          Add Member
         </Button>
       </CardHeader>
 
       {project.members.length === 0 ? (
-        <EmptyState title="No members yet" description="Invite workspace members to collaborate on this project." />
+        <EmptyState title="No members yet" description="Add workspace members to collaborate on this project." />
       ) : (
         <div className="flex flex-col divide-y divide-border">
           {project.members.map((member) => (
@@ -127,29 +171,69 @@ export function ProjectMembersTab() {
         </div>
       )}
 
-      <Modal isOpen={isInviteOpen} onClose={() => setIsInviteOpen(false)} title="Invite a member">
+      <Modal isOpen={isInviteOpen} onClose={closeInviteModal} title={`Add members to ${project.name}`}>
         {eligibleMembers.length === 0 ? (
           <p className="text-sm text-foreground-muted">Everyone in the workspace is already on this project.</p>
         ) : (
           <div className="flex flex-col gap-4">
-            <select
-              value={selectedUid}
-              onChange={(e) => setSelectedUid(e.target.value)}
-              className="h-10 w-full rounded-theme border border-border bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-            >
-              <option value="">Select a workspace member...</option>
-              {eligibleMembers.map((m) => (
-                <option key={m.userId} value={m.userId}>
-                  {m.displayName} ({m.email})
-                </option>
-              ))}
-            </select>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search workspace members..."
+                className="h-10 w-full rounded-theme border border-border bg-surface pl-9 pr-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+              />
+            </div>
+
+            <div className="flex max-h-56 flex-col gap-1 overflow-y-auto rounded-theme border border-border p-1.5">
+              {searchedEligibleMembers.length === 0 ? (
+                <p className="px-2 py-3 text-center text-xs text-foreground-muted">No matching workspace members.</p>
+              ) : (
+                searchedEligibleMembers.map((m) => (
+                  <label
+                    key={m.userId}
+                    className="flex cursor-pointer items-center gap-2.5 rounded-theme px-2 py-1.5 hover:bg-surface-muted"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedUids.has(m.userId)}
+                      onChange={() => toggleSelected(m.userId)}
+                      className="h-4 w-4 shrink-0 rounded border-border accent-primary"
+                    />
+                    <Avatar name={m.displayName} src={m.photoURL} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm text-foreground">{m.displayName}</p>
+                      <p className="truncate text-xs text-foreground-muted">{m.email}</p>
+                    </div>
+                  </label>
+                ))
+              )}
+            </div>
+
+            <label className="flex flex-col gap-1.5 text-xs font-medium text-foreground">
+              Role
+              <select
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value as ProjectRole)}
+                className="h-9 rounded-theme border border-border bg-surface px-2.5 text-sm font-normal capitalize text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+              >
+                {PROJECT_ROLES.filter((r) => r !== "owner").map((role) => (
+                  <option key={role} value={role} className="capitalize">
+                    {role}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setIsInviteOpen(false)}>
+              <Button variant="outline" onClick={closeInviteModal}>
                 Cancel
               </Button>
-              <Button onClick={handleInvite} disabled={!selectedUid} isLoading={actions.isSubmitting}>
-                Add to project
+              <Button onClick={handleInvite} disabled={selectedUids.size === 0} isLoading={isInviting}>
+                Add Member{selectedUids.size > 1 ? "s" : ""}
+                {selectedUids.size > 0 ? ` (${selectedUids.size})` : ""}
               </Button>
             </div>
           </div>

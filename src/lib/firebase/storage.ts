@@ -17,6 +17,20 @@ export function workspaceLogoRef(workspaceId: string, fileName: string): Storage
   return ref(storage, `workspaces/${workspaceId}/branding/logo-${fileName}`);
 }
 
+/**
+ * FIXED (non-timestamped) path for the Settings > Branding page's own
+ * logo upload (settings.branding.logoUrl) — deliberately a separate,
+ * stable object key from workspaceLogoRef above, which is a DIFFERENT
+ * logo concept (workspace.companyLogoUrl, shown in the sidebar's
+ * workspace switcher, uploaded from Settings > Workspace). Using one
+ * fixed path per workspace means every re-upload overwrites the same
+ * Storage object in place — no orphaned old logo files accumulating,
+ * and no separate delete-then-upload step needed.
+ */
+export function workspaceBrandingLogoRef(workspaceId: string): StorageReference {
+  return ref(storage, `workspaces/${workspaceId}/branding/logo`);
+}
+
 export function workspaceFileRef(workspaceId: string, path: string): StorageReference {
   return ref(storage, `workspaces/${workspaceId}/files/${path}`);
 }

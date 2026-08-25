@@ -11,13 +11,27 @@ import { ROUTES } from "@/lib/constants/routes";
 
 function ProjectDetailsShell({ projectId, children }: { projectId: string; children: React.ReactNode }) {
   const router = useRouter();
-  const { project, isLoading, error } = useProjectDetailsContext();
+  const { project, isLoading, error, hasAccess } = useProjectDetailsContext();
 
-  if (isLoading) return <Loader fullScreen label="Loading project..." />;
+  if (isLoading || hasAccess === null) return <Loader fullScreen label="Loading project..." />;
 
   if (error) return <ErrorState message={error} />;
 
   if (!project) {
+    return (
+      <ErrorState
+        message="This project doesn't exist, or it doesn't belong to your workspace."
+        onRetry={() => router.push(ROUTES.projects)}
+      />
+    );
+  }
+
+  // Project exists and belongs to this workspace, but the signed-in
+  // user has no project_members record for it (and isn't a workspace
+  // owner/admin or IT Support) — deliberately worded the same as the
+  // "doesn't exist" case above so this can't be used to distinguish
+  // "you're not allowed" from "it's not there" by probing project ids.
+  if (!hasAccess) {
     return (
       <ErrorState
         message="This project doesn't exist, or it doesn't belong to your workspace."

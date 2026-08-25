@@ -49,6 +49,17 @@ export default function BrandingSettingsPage() {
   const branding = settings?.branding ?? DEFAULT_BRANDING_SETTINGS;
   const isDirty = JSON.stringify(draftColors) !== JSON.stringify(theme.colors) || draftActivePaletteId !== theme.activePaletteId;
 
+  // The logo (and only the logo) is stored at a FIXED Storage path
+  // (see workspaceBrandingLogoRef) so re-uploads replace the previous
+  // file in place — which means the URL string itself doesn't change
+  // on re-upload, and the browser could otherwise keep showing a
+  // cached copy of the OLD image. Cache-busting off settings.updatedAt
+  // guarantees this preview (and the Sidebar's copy — see Sidebar.tsx)
+  // always reflects the latest upload.
+  const logoPreviewUrl = branding.logoUrl
+    ? `${branding.logoUrl}${branding.logoUrl.includes("?") ? "&" : "?"}v=${encodeURIComponent(settings?.updatedAt ?? "")}`
+    : null;
+
   async function handleUpload(field: "logoUrl" | "faviconUrl" | "loginBackgroundUrl" | "dashboardBackgroundUrl", file: File) {
     if (!workspaceId) return;
     setUploadingField(field);
@@ -136,7 +147,7 @@ export default function BrandingSettingsPage() {
         description={!canManageWorkspace ? "Only workspace owners and admins can change these." : undefined}
       >
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <ImageUploadSlot label="Logo" previewUrl={branding.logoUrl} isUploading={uploadingField === "logoUrl"} onUpload={(f) => handleUpload("logoUrl", f)} disabled={!canManageWorkspace} />
+          <ImageUploadSlot label="Logo" previewUrl={logoPreviewUrl} isUploading={uploadingField === "logoUrl"} onUpload={(f) => handleUpload("logoUrl", f)} disabled={!canManageWorkspace} />
           <ImageUploadSlot label="Favicon" previewUrl={branding.faviconUrl} isUploading={uploadingField === "faviconUrl"} onUpload={(f) => handleUpload("faviconUrl", f)} disabled={!canManageWorkspace} />
         </div>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">

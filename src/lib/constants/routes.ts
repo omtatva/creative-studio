@@ -23,6 +23,7 @@ export const ROUTES = {
   settingsReview: "/settings/review-settings",
   settingsAccessControl: "/settings/access-control",
   settingsAi: "/settings/ai",
+  settingsAllWorkspaces: "/settings/all-workspaces",
   workspaceCreate: "/workspace/create",
   projects: "/projects",
   tasks: "/tasks",

@@ -65,7 +65,6 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
   const [isStageFormOpen, setIsStageFormOpen] = useState(false);
   const [isTemplateFormOpen, setIsTemplateFormOpen] = useState(false);
   const [queue, setQueue] = useState<UploadQueueItem[]>([]);
-  const [uploadStageOverride, setUploadStageOverride] = useState<string | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<Stage | null>(null);
   const [moveToStageId, setMoveToStageId] = useState<string>("");
   const uploadInputRef = useRef<HTMLInputElement>(null);
@@ -126,55 +125,31 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
     return sorted;
   }, [groups, statusFilter, searchQuery, sortKey]);
 
-  const visibleGroups = activeStageId ? filteredGroups.filter((g) => g.latest.stageId === activeStageId) : filteredGroups;
   const stageAssetCount = (stageId: string) => groups.filter((g) => g.latest.stageId === stageId).length;
   const stagePendingCount = (stageId: string) => groups.filter((g) => g.latest.stageId === stageId && g.latest.reviewStatus === "pending_review").length;
   const stageApprovedCount = (stageId: string) => groups.filter((g) => g.latest.stageId === stageId && g.latest.reviewStatus === "approved").length;
-
-  // Section-grouped view (only meaningful when not already filtered to one stage) — mirrors the Krock-style "ANIMATION / REVIEW / FINAL" home layout.
-  const sections = useMemo(() => {
-    if (activeStageId) return [{ stage: stages.find((s) => s.id === activeStageId) ?? null, groups: visibleGroups }];
-    const byStage = new Map<string, AssetGroup[]>();
-    const unassigned: AssetGroup[] = [];
-    for (const group of visibleGroups) {
-      const stageId = group.latest.stageId;
-      if (!stageId) {
-        unassigned.push(group);
-        continue;
-      }
-      const existing = byStage.get(stageId);
-      if (existing) existing.push(group);
-      else byStage.set(stageId, [group]);
-    }
-    const result: { stage: Stage | null; groups: AssetGroup[] }[] = stages
-      .map((stage) => ({ stage, groups: byStage.get(stage.id) ?? [] }))
-      .filter((section) => section.groups.length > 0);
-    if (unassigned.length > 0) result.push({ stage: null, groups: unassigned });
-    return result;
-  }, [activeStageId, visibleGroups, stages]);
 
   function updateQueueItem(id: string, patch: Partial<UploadQueueItem>) {
     setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   }
 
-  // "All stages" is a VIEW/FILTER, never an upload destination — the
-  // only way to get a non-null target here is a specific stage tab
-  // being active, or the user explicitly choosing one from the
-  // "Select a stage to upload" dropdown shown below while on "All
-  // stages". This intentionally does NOT fall back to stages[0] —
-  // that fallback still exists, but only inside
-  // fileService.uploadProjectFile as a last-resort safety net for
-  // callers that genuinely have no stage concept (e.g. a project with
-  // zero stages). A deliberate upload action from this screen must
-  // never silently pick an arbitrary stage.
-  const uploadTargetStageId = activeStageId ?? uploadStageOverride;
-  const isAllStagesView = activeStageId === null;
+  // Each stage is its own accordion row — clicking one expands its upload
+  // zone + assets directly beneath it (see the render below), so the
+  // expanded stage IS the upload target. There's no "All stages" view left
+  // to pick an arbitrary destination from.
+  const uploadTargetStageId = activeStageId;
 
   async function handleFiles(fileList: File[]) {
     if (!uploadTargetStageId) {
       toast.error("Select a stage before uploading.");
       return;
     }
+    // Uploading a single file is a "go work on this now" action, so it jumps
+    // straight into the Creative Review Workspace once the upload finishes —
+    // matching Krock's upload-then-edit flow. A multi-file drop stays on this
+    // grid instead, since there's no single obvious file to jump into.
+    const jumpToReviewOnSuccess = fileList.length === 1;
+
     for (const file of fileList) {
       const id = crypto.randomUUID();
 
@@ -196,6 +171,9 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
         );
         if (fileId) {
           updateQueueItem(id, { status: "success", progress: 100 });
+          if (jumpToReviewOnSuccess) {
+            router.push(fileReviewRoute(projectId, uploadTargetStageId, fileId));
+          }
         } else {
           updateQueueItem(id, { status: "error", error: "No active workspace found." });
           toast.error(`"${file.name}" failed to upload: no active workspace found.`);
@@ -283,169 +261,129 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
         }}
       />
 
-      {!isLoadingStages && stages.length > 0 && (
-        <div>
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-foreground-muted">Stages</h3>
-          <div className="flex gap-3 overflow-x-auto pb-1">
-            <button
-              onClick={() => setActiveStageId(null)}
-              className={cn(
-                "flex min-w-[120px] shrink-0 items-center justify-center rounded-theme border px-4 text-sm font-medium transition-colors",
-                activeStageId === null ? "border-primary bg-primary/5 text-primary" : "border-border bg-surface text-foreground-muted hover:bg-surface-muted"
-              )}
-            >
-              All stages
-            </button>
-            {stages.map((stage) => (
-              <StageCard
-                key={stage.id}
-                stage={stage}
-                assetCount={stageAssetCount(stage.id)}
-                pendingCount={stagePendingCount(stage.id)}
-                approvedCount={stageApprovedCount(stage.id)}
-                isActive={activeStageId === stage.id}
-                onClick={() => setActiveStageId(activeStageId === stage.id ? null : stage.id)}
-                onRename={(name) => stageActions.rename(stage.id, name)}
-                onArchive={() => requestArchiveStage(stage)}
-              />
-            ))}
-          </div>
+      {isLoadingStages ? (
+        <div className="flex flex-col gap-3">
+          {Array.from({ length: 2 }).map((_, i) => <div key={i} className="h-20 animate-pulse rounded-theme bg-surface-muted" />)}
         </div>
-      )}
-
-      <Card>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-foreground-muted">Selected Stage</h3>
-            <p className="mt-0.5 text-sm font-semibold text-foreground">
-              {activeStageId ? stages.find((s) => s.id === activeStageId)?.name ?? "Stage" : "All stages"}
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {isAllStagesView && stages.length > 0 && (
-              <div className="flex items-center gap-1.5 text-xs text-foreground-muted">
-                <span>Upload to</span>
-                <select
-                  value={uploadStageOverride ?? ""}
-                  onChange={(e) => setUploadStageOverride(e.target.value || null)}
-                  className={cn(
-                    "h-8 rounded-theme border bg-surface px-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/50",
-                    uploadStageOverride ? "border-border text-foreground" : "border-primary/50 text-foreground-muted"
-                  )}
-                >
-                  <option value="">Select a stage to upload</option>
-                  {stages.map((stage) => (
-                    <option key={stage.id} value={stage.id}>{stage.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-            <Button size="sm" onClick={() => uploadInputRef.current?.click()} disabled={!uploadTargetStageId}>
-              <Upload className="h-4 w-4" />
-              Upload Files
-            </Button>
-          </div>
-        </div>
-
-        <div className="mt-3">
-          <CreativeUploadZone
-            onFiles={handleFiles}
-            disabled={!uploadTargetStageId}
-            disabledMessage="Select a stage above to enable uploads"
-          />
-        </div>
-      </Card>
-
-      {queue.length > 0 && (
-        <UploadProgressList items={queue} onDismiss={(id) => setQueue((prev) => prev.filter((q) => q.id !== id))} />
-      )}
-
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[200px] flex-1">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted" />
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search assets..."
-            className="h-9 w-full rounded-theme border border-border bg-surface pl-8 pr-3 text-sm text-foreground placeholder:text-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
-          />
-        </div>
-
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as AssetStatus | "all")}
-          className="h-9 rounded-theme border border-border bg-surface px-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-        >
-          {STATUS_FILTERS.map((f) => (
-            <option key={f.key} value={f.key}>{f.label}</option>
-          ))}
-        </select>
-
-        <select
-          value={sortKey}
-          onChange={(e) => setSortKey(e.target.value as SortKey)}
-          className="h-9 rounded-theme border border-border bg-surface px-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-        >
-          <option value="updated">Recently updated</option>
-          <option value="name">Name</option>
-          <option value="size">File size</option>
-        </select>
-
-        <div className="flex items-center gap-0.5 rounded-theme border border-border p-0.5">
-          <button
-            onClick={() => setViewMode("grid")}
-            className={cn("rounded-theme p-1.5", viewMode === "grid" ? "bg-primary/10 text-primary" : "text-foreground-muted hover:bg-surface-muted")}
-            aria-label="Grid view"
-          >
-            <LayoutGrid className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => setViewMode("list")}
-            className={cn("rounded-theme p-1.5", viewMode === "list" ? "bg-primary/10 text-primary" : "text-foreground-muted hover:bg-surface-muted")}
-            aria-label="List view"
-          >
-            <LayoutList className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-
-      {!isLoadingFiles && visibleGroups.length === 0 ? (
+      ) : stages.length === 0 ? (
         <EmptyState
           icon={<FileStack className="h-8 w-8" />}
-          title="No creative assets yet"
-          description="Upload files or drag them into the canvas above to get started."
+          title="No stages yet"
+          description="Create a stage above, then click it to start uploading creative files."
         />
-      ) : isLoadingFiles ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => <div key={i} className="aspect-[4/5] animate-pulse rounded-theme bg-surface-muted" />)}
-        </div>
       ) : (
-        <div className="flex flex-col gap-6">
-          {sections.map((section) => (
-            <div key={section.stage?.id ?? "unassigned"} className="flex flex-col gap-3">
-              <div className="flex items-center gap-2">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-foreground-muted">
-                  {section.stage?.name ?? "Unassigned"}
-                </h3>
-                <span className="text-xs text-foreground-muted">({section.groups.length})</span>
-              </div>
+        <div className="flex flex-col gap-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-foreground-muted">Stages</h3>
+          {stages.map((stage) => {
+            const isExpanded = activeStageId === stage.id;
+            const stageGroups = filteredGroups.filter((g) => g.latest.stageId === stage.id);
 
-              {viewMode === "grid" ? (
-                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-                  {section.groups.map((group) => (
-                    <AssetCard key={group.groupId} group={group} onClick={() => openAsset(group)} />
-                  ))}
-                </div>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  {section.groups.map((group) => (
-                    <AssetListRow key={group.groupId} group={group} onClick={() => openAsset(group)} />
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
+            return (
+              <div key={stage.id} className="flex flex-col gap-3">
+                <StageCard
+                  stage={stage}
+                  assetCount={stageAssetCount(stage.id)}
+                  pendingCount={stagePendingCount(stage.id)}
+                  approvedCount={stageApprovedCount(stage.id)}
+                  isActive={isExpanded}
+                  onClick={() => setActiveStageId(isExpanded ? null : stage.id)}
+                  onRename={(name) => stageActions.rename(stage.id, name)}
+                  onArchive={() => requestArchiveStage(stage)}
+                />
+
+                {isExpanded && (
+                  <Card className="flex flex-col gap-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-sm font-semibold text-foreground">Upload to &quot;{stage.name}&quot;</p>
+                      <Button size="sm" onClick={() => uploadInputRef.current?.click()}>
+                        <Upload className="h-4 w-4" />
+                        Upload Files
+                      </Button>
+                    </div>
+
+                    <CreativeUploadZone onFiles={handleFiles} disabled={false} disabledMessage="" />
+
+                    {queue.length > 0 && (
+                      <UploadProgressList items={queue} onDismiss={(id) => setQueue((prev) => prev.filter((q) => q.id !== id))} />
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="relative min-w-[200px] flex-1">
+                        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground-muted" />
+                        <input
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          placeholder="Search assets..."
+                          className="h-9 w-full rounded-theme border border-border bg-surface pl-8 pr-3 text-sm text-foreground placeholder:text-foreground-muted focus:outline-none focus:ring-2 focus:ring-primary/50"
+                        />
+                      </div>
+
+                      <select
+                        value={statusFilter}
+                        onChange={(e) => setStatusFilter(e.target.value as AssetStatus | "all")}
+                        className="h-9 rounded-theme border border-border bg-surface px-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                      >
+                        {STATUS_FILTERS.map((f) => (
+                          <option key={f.key} value={f.key}>{f.label}</option>
+                        ))}
+                      </select>
+
+                      <select
+                        value={sortKey}
+                        onChange={(e) => setSortKey(e.target.value as SortKey)}
+                        className="h-9 rounded-theme border border-border bg-surface px-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                      >
+                        <option value="updated">Recently updated</option>
+                        <option value="name">Name</option>
+                        <option value="size">File size</option>
+                      </select>
+
+                      <div className="flex items-center gap-0.5 rounded-theme border border-border p-0.5">
+                        <button
+                          onClick={() => setViewMode("grid")}
+                          className={cn("rounded-theme p-1.5", viewMode === "grid" ? "bg-primary/10 text-primary" : "text-foreground-muted hover:bg-surface-muted")}
+                          aria-label="Grid view"
+                        >
+                          <LayoutGrid className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => setViewMode("list")}
+                          className={cn("rounded-theme p-1.5", viewMode === "list" ? "bg-primary/10 text-primary" : "text-foreground-muted hover:bg-surface-muted")}
+                          aria-label="List view"
+                        >
+                          <LayoutList className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {!isLoadingFiles && stageGroups.length === 0 ? (
+                      <EmptyState
+                        icon={<FileStack className="h-8 w-8" />}
+                        title="No creative assets yet"
+                        description="Upload files or drag them into the zone above to get started."
+                      />
+                    ) : isLoadingFiles ? (
+                      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+                        {Array.from({ length: 4 }).map((_, i) => <div key={i} className="aspect-[4/5] animate-pulse rounded-theme bg-surface-muted" />)}
+                      </div>
+                    ) : viewMode === "grid" ? (
+                      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+                        {stageGroups.map((group) => (
+                          <AssetCard key={group.groupId} group={group} onClick={() => openAsset(group)} />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2">
+                        {stageGroups.map((group) => (
+                          <AssetListRow key={group.groupId} group={group} onClick={() => openAsset(group)} />
+                        ))}
+                      </div>
+                    )}
+                  </Card>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 

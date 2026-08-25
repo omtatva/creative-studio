@@ -12,9 +12,17 @@ import { GmailConnectionStatus } from "@/types/gmail.types";
 const GMAIL_ERROR_MESSAGES: Record<string, string> = {
   denied: "Gmail connection was cancelled.",
   invalid_state: "The connection attempt expired or was invalid. Try connecting again.",
-  token_exchange_failed: "Google rejected the connection attempt. Try again.",
+  // token_exchange_failed and userinfo_failed both mean the OAuth
+  // round trip itself didn't complete successfully (code-for-token
+  // exchange rejected, or the identity lookup that followed it
+  // failed) — the real cause (invalid_grant, redirect_uri_mismatch,
+  // insufficient scope, ...) is logged server-side (see
+  // callback/route.ts) but deliberately not detailed here, since none
+  // of those specifics are actionable for the end user — "reconnect"
+  // is the correct next step regardless of which one it was.
+  token_exchange_failed: "Gmail connection failed. Please reconnect your Google account.",
   no_refresh_token: "Google didn't grant lasting access. Try connecting again.",
-  userinfo_failed: "Couldn't confirm the connected Gmail address. Try again.",
+  userinfo_failed: "Gmail connection failed. Please reconnect your Google account.",
   storage_failed: "Couldn't save the Gmail connection. Try again.",
   server_not_configured: "Gmail connect isn't configured on the server yet.",
   google_error: "Google returned an error. Try again.",

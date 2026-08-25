@@ -21,13 +21,15 @@ import {
   ChevronsLeft,
   ChevronsRight,
   X,
-  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { useUIStore } from "@/store/useUIStore";
 import { ROUTES } from "@/lib/constants/routes";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useWorkspaceSettings } from "@/hooks/useWorkspaceSettings";
+import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
+import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
+import { Avatar } from "@/components/ui/Avatar";
 import { DEFAULT_SIDEBAR_CONFIG, DEFAULT_FIELD_SECURITY_SETTINGS } from "@/lib/constants/settingsDefaults";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 
@@ -63,6 +65,8 @@ export function Sidebar() {
   const pathname = usePathname();
   const { unreadCount } = useNotifications();
   const { settings } = useWorkspaceSettings();
+  const { workspace } = useWorkspaceContext();
+  const { canManageWorkspace, isLoading: isLoadingRole } = useCurrentMemberRole();
   const isCollapsed = useUIStore((s) => s.isSidebarCollapsed);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const isMobileNavOpen = useUIStore((s) => s.isMobileNavOpen);
@@ -83,7 +87,30 @@ export function Sidebar() {
   const forcedHidden: Record<string, boolean> = {
     reviews: fieldSecurity.hideReviews,
     aiStudio: fieldSecurity.hideAI,
+    // A normal project member has no workspace-administration role —
+    // Settings (Branding, AI, Access Control, Users, Roles, ...) is
+    // owner/admin territory. Hiding the nav entry keeps their view
+    // scoped to their actual projects, matching the intended model
+    // ("Normal Employee: NO workspace administration"). The
+    // underlying settings data was already owner/admin-gated by
+    // Firestore rules and canManageWorkspace checks on each settings
+    // sub-page before this — this only removes the entry point, it
+    // doesn't newly restrict anything that was actually reachable.
+    settings: !isLoadingRole && !canManageWorkspace,
   };
+
+  // Per-workspace branding (settings.branding.logoUrl), NOT the app's
+  // own static logo — this is the whole point of the Branding page's
+  // logo upload actually being used somewhere. Falls back to a
+  // generated initial (see Avatar.tsx) when the workspace has no
+  // custom logo, never a broken image. Cache-busted off the settings
+  // doc's own updatedAt so re-uploading a new logo to the same fixed
+  // Storage path (see workspaceBrandingLogoRef) is reflected
+  // immediately instead of showing a browser-cached stale image.
+  const workspaceName = workspace?.name || workspace?.companyName || "Omtatva Digitals";
+  const brandingLogoUrl = settings?.branding.logoUrl
+    ? `${settings.branding.logoUrl}${settings.branding.logoUrl.includes("?") ? "&" : "?"}v=${encodeURIComponent(settings.updatedAt ?? "")}`
+    : null;
 
   const visibleItems = NAV_ITEMS
     .map((item) => {
@@ -102,11 +129,14 @@ export function Sidebar() {
   const content = (
     <div className="flex h-full flex-col">
       <div className={cn("flex h-14 items-center gap-2 px-4 pt-4", isCollapsed && "justify-center px-0")}>
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-theme bg-primary text-white">
-          <Sparkles className="h-4 w-4" />
-        </div>
+        {brandingLogoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={brandingLogoUrl} alt={workspaceName} className="h-8 w-8 shrink-0 rounded-theme object-cover" />
+        ) : (
+          <Avatar name={workspaceName} size="sm" />
+        )}
         {!isCollapsed && (
-          <span className="truncate text-[13px] font-semibold tracking-[0.08em] text-foreground">OMTATVA DIGITALS</span>
+          <span className="truncate text-[13px] font-semibold tracking-[0.08em] text-foreground">{workspaceName.toUpperCase()}</span>
         )}
         <button
           className="ml-auto rounded-theme p-1.5 text-foreground-muted hover:bg-surface-muted md:hidden"

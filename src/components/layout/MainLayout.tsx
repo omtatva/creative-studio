@@ -1,13 +1,11 @@
 "use client";
 
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode } from "react";
 import { Sidebar } from "./Sidebar";
 import { Navbar } from "./Navbar";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { ErrorState } from "@/components/shared/ErrorState";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
-import { useThemeContext } from "@/contexts/ThemeContext";
-import { applyAppShellTheme, clearAppShellTheme } from "@/lib/constants/appShellTheme";
 
 /**
  * Shell used by every authenticated route (dashboard, settings).
@@ -20,24 +18,20 @@ import { applyAppShellTheme, clearAppShellTheme } from "@/lib/constants/appShell
  * page under here needs workspaceId, so this is the one place that
  * blocks and shows the real error instead of quietly rendering a
  * dashboard where every write silently fails.
+ *
+ * Dark/light + per-workspace branding colors are applied globally by
+ * ThemeContext.applyThemeToDocument on <html> — there used to be a
+ * second, shell-scoped "deeper navy refinement" layer applied here on
+ * top of that (see the removed appShellTheme.ts), but it unconditionally
+ * forced its own fixed navy for structural tokens like --color-surface
+ * whenever dark mode was on, which fought ThemeContext's per-workspace
+ * hue-derived dark surfaces and always won (this element is more
+ * specific than <html>). Removed rather than special-cased further —
+ * ThemeContext's derivation already covers this shell correctly for
+ * every palette, so a second layer had nothing left to add.
  */
 export function MainLayout({ children }: { children: ReactNode }) {
   const { error: workspaceError, isLoading: isWorkspaceLoading, refreshWorkspace } = useWorkspaceContext();
-  const { theme } = useThemeContext();
-  const shellRef = useRef<HTMLDivElement>(null);
-
-  // Applies the app-shell's deeper navy/violet refinement (see
-  // appShellTheme.ts) on this one element only — scoped so the public
-  // landing page and /login /signup, which share the same global
-  // --color-* variables, never see it. Skips any role a workspace has
-  // actually customized via Settings > Branding, so per-workspace
-  // theming still works exactly as before inside the shell too.
-  useEffect(() => {
-    const el = shellRef.current;
-    if (!el) return;
-    applyAppShellTheme(el, theme.colors);
-    return () => clearAppShellTheme(el);
-  }, [theme.colors]);
 
   return (
     <ProtectedRoute>
@@ -46,7 +40,7 @@ export function MainLayout({ children }: { children: ReactNode }) {
           <ErrorState title="Couldn't load your workspace" message={workspaceError} onRetry={refreshWorkspace} />
         </div>
       ) : (
-        <div ref={shellRef} className="flex min-h-screen bg-background">
+        <div className="flex min-h-screen bg-background">
           <Sidebar />
           <div className="flex min-h-screen flex-1 flex-col">
             <Navbar />

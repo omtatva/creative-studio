@@ -10,7 +10,7 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
 
 function appUrl(): string {
-  return (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/$/, "");
+  return (process.env.NEXT_PUBLIC_APP_URL || "https://otdfeedo.omtatvadigitals.com").replace(/\/$/, "");
 }
 
 /** Redirects back into the app with a short, non-sensitive result code — read client-side via plain `window.location.search` (not next/navigation's useSearchParams, which would require a Suspense boundary on that page for no real benefit here) by GmailConnectionSection. Never puts token material or verbose error detail in the URL. */
@@ -79,7 +79,14 @@ export async function GET(request: NextRequest) {
 
   if (!tokenResponse.ok) {
     const body = await tokenResponse.json().catch(() => null);
-    console.error("[auth/google/callback] token exchange rejected:", { status: tokenResponse.status, error: body?.error });
+    // Google's token-exchange error body is safe to log in full — it's
+    // an error CODE/description (e.g. "invalid_grant",
+    // "redirect_uri_mismatch"), never token material.
+    console.error("[auth/google/callback] token exchange rejected:", {
+      status: tokenResponse.status,
+      error: body?.error,
+      error_description: body?.error_description,
+    });
     return resultRedirect("error", "token_exchange_failed");
   }
 
@@ -111,7 +118,17 @@ export async function GET(request: NextRequest) {
   }
 
   if (!userInfoResponse.ok) {
-    console.error("[auth/google/callback] userinfo request failed:", userInfoResponse.status);
+    // Body is Google's own error JSON (e.g. {"error":{"code":403,
+    // "message":"Request had insufficient authentication scopes."}})
+    // — never token material, safe to log in full for diagnosis. This
+    // exact 403 is what "insufficient scope" looks like — see
+    // GMAIL_OAUTH_SCOPES's comment in ../route.ts for why openid/
+    // email/profile must be requested for this call to succeed at all.
+    const body = await userInfoResponse.text().catch(() => "");
+    console.error("[auth/google/callback] userinfo request failed:", {
+      status: userInfoResponse.status,
+      body: body.slice(0, 500),
+    });
     return resultRedirect("error", "userinfo_failed");
   }
 

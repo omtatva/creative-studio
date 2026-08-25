@@ -2,11 +2,14 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
+  query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
 } from "firebase/firestore";
-import { workspacesCol, workspaceDoc, workspaceSlugDoc, memberDoc, userDoc, settingsDoc } from "@/lib/firebase/firestore";
+import { workspacesCol, workspaceDoc, workspaceSlugDoc, memberDoc, userDoc, settingsDoc, membersCol } from "@/lib/firebase/firestore";
 import { uploadFile, workspaceLogoRef } from "@/lib/firebase/storage";
 import { getCurrentUser } from "@/lib/firebase/auth";
 import { CreateWorkspacePayload, Workspace } from "@/types/workspace.types";
@@ -326,4 +329,50 @@ export async function updateWorkspaceLogo(workspaceId: string, file: File): Prom
   const url = await uploadFile(logoRef, file);
   await updateDoc(workspaceDoc(workspaceId), { companyLogoUrl: url, updatedAt: serverTimestamp() });
   return url;
+}
+
+/**
+ * Overrides ONE limit on THIS workspace's own `limits` map, independent
+ * of its `plan` — see planService.ts: every limit check reads
+ * `workspace.limits[key]` (a real per-workspace field, snapshotted from
+ * PLAN_LIMITS at creation, see createWorkspace above), never the static
+ * PLAN_LIMITS table directly, so writing here takes effect immediately
+ * with no plan/billing change needed. `Infinity` is a valid, intentional
+ * value — checkWorkspaceLimit already treats `!Number.isFinite(limit)`
+ * as "unlimited" (see PLAN_LIMITS.enterprise using the same convention),
+ * and Firestore's double type natively supports it.
+ */
+export async function updateWorkspaceLimit(workspaceId: string, key: keyof Workspace["limits"], value: number): Promise<void> {
+  await updateDoc(workspaceDoc(workspaceId), { [`limits.${key}`]: value, updatedAt: serverTimestamp() } as never);
+}
+
+/**
+ * Deletes a workspace — but deliberately an ACCESS cutoff, not a full
+ * data wipe: removes every `members/{workspaceId}_*` doc, the
+ * `settings/{workspaceId}` doc, and the `workspaces/{workspaceId}` doc
+ * itself. Once these are gone, every access-control function in
+ * firestore.rules (isWorkspaceMember, isWorkspaceMemberWithRole,
+ * canAccessProject, ...) denies everyone immediately — the workspace
+ * disappears from every member's switcher and every project/file/task
+ * underneath becomes unreachable. Projects/tasks/files/comments/Storage
+ * uploads are intentionally left in place as orphaned, inert data
+ * rather than cascaded through and permanently erased — a real full
+ * wipe is a separate, much larger and irreversible operation this
+ * doesn't attempt.
+ *
+ * Order matters: members and settings MUST be deleted before the
+ * workspace doc itself. Both of their delete rules call
+ * isWorkspaceOwner(workspaceId), which does a get() on
+ * `workspaces/{workspaceId}` — get() on an already-deleted document
+ * throws inside rule evaluation (the same pitfall documented throughout
+ * firestore.rules), so deleting the workspace doc first would strand
+ * every remaining members/settings doc as undeletable by anyone.
+ */
+export async function deleteWorkspaceAccess(workspaceId: string): Promise<void> {
+  const memberSnapshot = await getDocs(query(membersCol(), where("workspaceId", "==", workspaceId)));
+  for (const memberDocSnap of memberSnapshot.docs) {
+    await deleteDoc(memberDocSnap.ref);
+  }
+  await deleteDoc(settingsDoc(workspaceId));
+  await deleteDoc(workspaceDoc(workspaceId));
 }

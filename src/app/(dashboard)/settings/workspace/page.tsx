@@ -1,25 +1,53 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Upload } from "lucide-react";
+import { AlertTriangle, Upload } from "lucide-react";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { PlanUsageSection } from "@/components/settings/PlanUsageSection";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Loader } from "@/components/ui/Loader";
+import { Modal } from "@/components/ui/Modal";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
+import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
 import { useToast } from "@/hooks/useToast";
-import { updateWorkspaceProfile, updateWorkspaceLogo } from "@/services/workspaceService";
+import { updateWorkspaceProfile, updateWorkspaceLogo, deleteWorkspaceAccess } from "@/services/workspaceService";
 import { workspaceSettingsSchema, type WorkspaceSettingsFormValues } from "@/lib/validations/settings.schema";
+import { ROUTES } from "@/lib/constants/routes";
 
 export default function WorkspaceSettingsPage() {
-  const { workspace, isLoading, refreshWorkspace } = useWorkspaceContext();
+  const router = useRouter();
+  const { workspace, workspaces, isLoading, refreshWorkspace, switchWorkspace } = useWorkspaceContext();
+  const { role } = useCurrentMemberRole();
   const toast = useToast();
   const [isSaving, setIsSaving] = useState(false);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
+
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  async function handleDeleteWorkspace() {
+    if (!workspace) return;
+    setIsDeleting(true);
+    try {
+      await deleteWorkspaceAccess(workspace.id);
+      toast.success(`"${workspace.name}" deleted`);
+      const remaining = workspaces.filter((w) => w.id !== workspace.id);
+      if (remaining.length > 0) await switchWorkspace(remaining[0]!.id);
+      else router.push(ROUTES.workspaceCreate);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete this workspace");
+    } finally {
+      setIsDeleting(false);
+      setIsDeleteModalOpen(false);
+      setDeleteConfirmText("");
+    }
+  }
 
   const {
     register,
@@ -127,6 +155,53 @@ export default function WorkspaceSettingsPage() {
       </form>
 
       <PlanUsageSection workspace={workspace} />
+
+      {role === "owner" && (
+        <SettingsSection title="Danger zone" description="Irreversible actions — think before you click.">
+          <div className="flex items-center justify-between gap-4 rounded-theme border border-error/30 bg-error/5 p-3.5">
+            <div>
+              <p className="text-sm font-medium text-foreground">Delete this workspace</p>
+              <p className="text-xs text-foreground-muted">
+                Removes it from every member&apos;s account immediately. Projects, files, and tasks are left in place but
+                become unreachable — not permanently erased.
+              </p>
+            </div>
+            <Button variant="danger" size="sm" onClick={() => setIsDeleteModalOpen(true)}>
+              Delete workspace
+            </Button>
+          </div>
+        </SettingsSection>
+      )}
+
+      <Modal
+        isOpen={isDeleteModalOpen}
+        onClose={() => {
+          setIsDeleteModalOpen(false);
+          setDeleteConfirmText("");
+        }}
+        title="Delete this workspace?"
+      >
+        <div className="flex flex-col gap-3">
+          <div className="flex items-start gap-2 rounded-theme border border-error/30 bg-error/5 p-3 text-sm text-foreground">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-error" />
+            <span>
+              Every member loses access to <strong>{workspace.name}</strong> immediately. This can&apos;t be undone from here.
+            </span>
+          </div>
+          <label className="flex flex-col gap-1.5 text-sm text-foreground">
+            Type <strong>{workspace.name}</strong> to confirm
+            <Input value={deleteConfirmText} onChange={(e) => setDeleteConfirmText(e.target.value)} placeholder={workspace.name} />
+          </label>
+          <div className="mt-2 flex justify-end gap-2">
+            <Button variant="outline" onClick={() => { setIsDeleteModalOpen(false); setDeleteConfirmText(""); }} disabled={isDeleting}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={handleDeleteWorkspace} isLoading={isDeleting} disabled={deleteConfirmText !== workspace.name}>
+              Delete workspace
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

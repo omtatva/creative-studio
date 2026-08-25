@@ -62,7 +62,7 @@ export const PLAN_DISPLAY_NAMES: Record<WorkspacePlan, string> = {
  */
 export const PLAN_PRICING: Record<WorkspacePlan, { monthlyUsd: number | null; billingPeriod: string }> = {
   starter: { monthlyUsd: 0, billingPeriod: "forever" },
-  pro: { monthlyUsd: 29, billingPeriod: "per month" },
-  business: { monthlyUsd: 99, billingPeriod: "per month" },
-  enterprise: { monthlyUsd: null, billingPeriod: "custom" },
+  pro: { monthlyUsd: 125, billingPeriod: "per month" },
+  business: { monthlyUsd: 450, billingPeriod: "per month" },
+  enterprise: { monthlyUsd: 1500, billingPeriod: "per month" },
 };

@@ -89,7 +89,25 @@ export async function checkWorkspaceLimit(workspace: Workspace, metric: Workspac
     return { allowed: true, used: 0, limit, reason: null };
   }
 
-  const used = await getWorkspaceUsage(workspace, metric);
+  let used: number;
+  try {
+    used = await getWorkspaceUsage(workspace, metric);
+  } catch (err) {
+    // The "projects" metric counts every non-archived project in the
+    // workspace — under the project-level access model (see
+    // firestore.rules' canAccessProject), a regular workspace member
+    // who isn't on every existing project can no longer read that
+    // full set, so this query now legitimately permission-denies for
+    // them. Failing OPEN here (not blocking the create they were
+    // actually trying to do) is the correct trade-off: this is a
+    // pre-flight capacity check, not a security boundary, and a
+    // member being unable to verify a plan limit must never be the
+    // reason a legitimate project creation silently breaks. Owners/
+    // admins/IT Support (who CAN see every project) still get the
+    // real, precisely-enforced count.
+    console.warn(`[planService] couldn't verify ${metric} usage (failing open):`, err instanceof Error ? err.message : err);
+    return { allowed: true, used: 0, limit, reason: null };
+  }
   if (used >= limit) {
     return {
       allowed: false,

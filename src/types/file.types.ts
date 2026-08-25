@@ -39,6 +39,64 @@ export type AssetStatus = "none" | "pending_review" | "approved" | "changes_requ
  * `reviewStatus === "approved"`) working unchanged per-version,
  * instead of needing a second embedded-versions schema.
  */
+/**
+ * "restricted" (default, or the field is simply absent on older docs) —
+ * only real project members can open this file, exactly as before this
+ * feature existed. "organization" — any signed-in member of the file's
+ * OWN workspace can open it via the share link even without being a
+ * project member (workspace membership bypasses project membership for
+ * this one file only). "anyone" — the link works with no sign-in at all,
+ * like an unauthenticated Google Sheets link — see firestore.rules'
+ * `isSharedFile()` for the actual enforcement; this type only shapes
+ * what the Share dialog writes.
+ */
+export type FileShareVisibility = "restricted" | "organization" | "anyone";
+
+/** "view" — read-only. "comment" — can also add comments/markers/annotations, same as Krock's reviewer role; never full edit (no new versions, no delete, no settings). */
+export type FileSharePermission = "view" | "comment";
+
+export interface FileShareSettings {
+  visibility: FileShareVisibility;
+  permission: FileSharePermission;
+  /** Unguessable id embedded in the share URL (/share/{shareToken}) — regenerated whenever visibility flips back to "restricted" then re-enabled, so an old copied link stops working. */
+  shareToken: string;
+  updatedAt: string;
+  updatedBy: ID;
+}
+
+/**
+ * `file_shares/{shareToken}` — a minimal, ID-keyed lookup doc kept in
+ * sync with a file's own `shareSettings` (see updateFileShareSettings
+ * in fileService.ts), mirroring the exact same pattern `workspace_slugs`
+ * already uses for "look this opaque string up before you know which
+ * tenant it belongs to."
+ *
+ * This exists because the public /share/[shareToken] page can't jump
+ * straight to `files/{fileId}` — it doesn't know the fileId yet, only
+ * the token, so it has to QUERY `files` by `shareSettings.shareToken`.
+ * But firestore.rules' read gate for `files` also depends on
+ * `workspaceId`/`projectId` (via canAccessProject), fields that query
+ * doesn't filter on — Firestore requires every `resource.data` field a
+ * list-query's rule touches to also be constrained by that query's own
+ * `where` clauses, or it rejects the ENTIRE query outright (the same
+ * class of bug this session already hit and fixed once for
+ * `project_members`). A `get()` on a known document ID has no such
+ * restriction, so the fix is the same one `workspace_slugs` already
+ * uses: resolve the opaque token via a cheap, always-successful `get()`
+ * on this tiny collection first (see firestore.rules — publicly
+ * readable, since knowing fileId/workspaceId/projectId alone grants
+ * nothing further; every other collection's real rules still apply),
+ * THEN do a normal `get()` on the real `files/{fileId}` doc, which
+ * evaluates isSharedFile() against real data with no compatibility
+ * issue at all.
+ */
+export interface FileShareLookup {
+  shareToken: string;
+  fileId: ID;
+  workspaceId: ID;
+  projectId: ID;
+}
+
 export interface ProjectFile extends Timestamps {
   id: ID;
   workspaceId: ID;
@@ -67,6 +125,8 @@ export interface ProjectFile extends Timestamps {
   previousVersionId: ID | null;
   isLatestVersion: boolean;
   durationSeconds: number | null; // video/audio only, when known
+  /** Null (or absent, on any file uploaded before this feature) means never shared — see FileShareSettings above. */
+  shareSettings: FileShareSettings | null;
 }
 
 /**

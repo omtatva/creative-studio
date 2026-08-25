@@ -15,10 +15,13 @@ import {
   CheckSquare,
   MessageSquareText,
   KeyRound,
+  Globe2,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { ROUTES } from "@/lib/constants/routes";
 import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
+import { useAuthContext } from "@/contexts/AuthContext";
+import { isItSupportUser } from "@/lib/constants/itSupport";
 
 const GROUPS = [
   {
@@ -53,24 +56,37 @@ const GROUPS = [
       { href: ROUTES.settingsReview, label: "Review Settings", icon: MessageSquareText },
     ],
   },
+  {
+    label: "Platform",
+    items: [
+      { href: ROUTES.settingsAllWorkspaces, label: "All Workspaces", icon: Globe2, itSupportOnly: true },
+    ],
+  },
 ];
 
 /** Left-hand sub-nav for the entire /settings section. */
 export function SettingsNav() {
   const pathname = usePathname();
   const { canManageWorkspace } = useCurrentMemberRole();
+  const { firebaseUser } = useAuthContext();
+  const isItSupport = isItSupportUser(firebaseUser);
 
   return (
     <nav className="w-full shrink-0 space-y-6 lg:w-56">
-      {GROUPS.map((group) => (
+      {GROUPS.map((group) => {
+        const visibleItems = group.items.filter(
+          (item) =>
+            (!("ownerAdminOnly" in item && item.ownerAdminOnly) || canManageWorkspace) &&
+            (!("itSupportOnly" in item && item.itSupportOnly) || isItSupport)
+        );
+        if (visibleItems.length === 0) return null;
+        return (
         <div key={group.label}>
           <p className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-foreground-muted">
             {group.label}
           </p>
           <div className="space-y-0.5">
-            {group.items
-              .filter((item) => !("ownerAdminOnly" in item && item.ownerAdminOnly) || canManageWorkspace)
-              .map((item) => {
+            {visibleItems.map((item) => {
               const isActive = pathname === item.href;
               return (
                 <Link
@@ -90,7 +106,8 @@ export function SettingsNav() {
             })}
           </div>
         </div>
-      ))}
+        );
+      })}
     </nav>
   );
 }

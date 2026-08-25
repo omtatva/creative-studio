@@ -159,7 +159,12 @@ function ProjectsPageContent() {
         coverImageFile: values.coverImageFile,
       });
       if (result.data) {
-        toast.success("Project created");
+        // Redirects straight to the new project's Members tab (see
+        // useProjectActions.create) so the creator can immediately add
+        // workspace members — a brand-new project starts with ONLY its
+        // creator as a project member (never every workspace member),
+        // matching the project-access model.
+        toast.success("Project created successfully. Add project members to get started.");
         setIsFormOpen(false);
       } else {
         toast.error(result.error ?? "Couldn't create project. Please try again.");

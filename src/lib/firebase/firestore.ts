@@ -8,10 +8,10 @@ import { db } from "./config";
 import { AppUser } from "@/types/user.types";
 import { Workspace, Member, WorkspaceInvite, CustomRole, WorkspaceSlug } from "@/types/workspace.types";
 import { WorkspaceSettings } from "@/types/settings.types";
-import { Project } from "@/types/project.types";
+import { Project, ProjectMembership } from "@/types/project.types";
 import { Task, TaskComment, TaskAttachment, TaskActivityEntry } from "@/types/task.types";
 import { Board, BoardColumn, BoardPreference, BoardActivityEntry } from "@/types/board.types";
-import { AssetAnnotation, AssetComment, ProjectFile } from "@/types/file.types";
+import { AssetAnnotation, AssetComment, FileShareLookup, ProjectFile } from "@/types/file.types";
 import { Review } from "@/types/review.types";
 import { AuditLogEntry } from "@/types/audit.types";
 import { Stage } from "@/types/stage.types";
@@ -71,6 +71,15 @@ export const notificationsCol = (workspaceId: string, uid: string) =>
 export const projectsCol = () => collection(db, "projects") as CollectionReference<Project>;
 export const projectDoc = (projectId: string) =>
   doc(db, "projects", projectId) as DocumentReference<Project>;
+
+/**
+ * Project-level access-control records — see ProjectMembership's doc
+ * comment in project.types.ts. Doc id is `${projectId}_${uid}`,
+ * mirroring `members`'s `${workspaceId}_${uid}` pattern above.
+ */
+export const projectMembersCol = () => collection(db, "project_members") as CollectionReference<ProjectMembership>;
+export const projectMemberDoc = (projectId: string, uid: string) =>
+  doc(db, "project_members", `${projectId}_${uid}`) as DocumentReference<ProjectMembership>;
 
 /**
  * `tasks` follows the same top-level-collection-with-workspaceId
@@ -146,6 +155,9 @@ export const fileAnnotationsCol = (fileId: string) =>
   collection(db, "files", fileId, "annotations") as CollectionReference<AssetAnnotation>;
 export const fileAnnotationDoc = (fileId: string, annotationId: string) =>
   doc(db, "files", fileId, "annotations", annotationId) as DocumentReference<AssetAnnotation>;
+
+/** See FileShareLookup's doc comment in file.types.ts for why this exists separately from `files` itself. */
+export const fileShareDoc = (shareToken: string) => doc(db, "file_shares", shareToken) as DocumentReference<FileShareLookup>;
 
 export const reviewsCol = () => collection(db, "reviews") as CollectionReference<Review>;
 export const reviewDoc = (reviewId: string) => doc(db, "reviews", reviewId) as DocumentReference<Review>;

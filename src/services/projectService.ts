@@ -14,7 +14,7 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
-import { projectsCol, projectDoc } from "@/lib/firebase/firestore";
+import { projectsCol, projectDoc, projectMembersCol, projectMemberDoc } from "@/lib/firebase/firestore";
 import { deleteFile, projectCoverRef, uploadFile } from "@/lib/firebase/storage";
 import { logActivity } from "@/services/activityService";
 import { getOrCreateDefaultStage } from "@/services/stageService";
@@ -22,8 +22,45 @@ import {
   CreateProjectPayload,
   Project,
   ProjectMember,
+  ProjectMembership,
   UpdateProjectPayload,
 } from "@/types/project.types";
+
+/**
+ * Writes/updates the REAL access-control record for one project
+ * membership — see ProjectMembership's doc comment in
+ * project.types.ts for why this is separate from the denormalized
+ * `Project.members[]` array. Every function below that touches
+ * project membership calls this alongside its existing array
+ * mutation, so nothing that already reads `project.members` for
+ * display needs to change.
+ */
+async function upsertProjectMembership(params: {
+  projectId: string;
+  workspaceId: string;
+  uid: string;
+  role: ProjectMember["role"];
+  addedBy: string;
+}): Promise<void> {
+  const { projectId, workspaceId, uid, role, addedBy } = params;
+  const docRef = projectMemberDoc(projectId, uid);
+  const existing = await getDoc(docRef);
+  await setDoc(
+    docRef,
+    {
+      id: `${projectId}_${uid}`,
+      projectId,
+      workspaceId,
+      uid,
+      role,
+      permissions: [],
+      addedBy,
+      updatedAt: serverTimestamp(),
+      ...(existing.exists() ? {} : { addedAt: serverTimestamp() }),
+    } as never,
+    { merge: true }
+  );
+}
 
 /**
  * All project reads/writes live here, and EVERY function takes a
@@ -114,6 +151,16 @@ export async function createProject({ workspaceId, owner, payload }: CreateProje
   }
 
   console.log("[projectService.createProject] Firestore write SUCCEEDED:", projectId);
+
+  try {
+    // The creator becomes a real, queryable project member — NOT
+    // every workspace member (see ProjectMembership's doc comment) —
+    // so they can immediately see/open the project they just made
+    // under the new membership-filtered visibility model.
+    await upsertProjectMembership({ projectId, workspaceId, uid: owner.uid, role: "owner", addedBy: owner.uid });
+  } catch (err) {
+    console.error("[projectService.createProject] owner project_members write failed (project was still created):", err);
+  }
 
   try {
     await logActivity(workspaceId, {
@@ -249,6 +296,12 @@ export async function duplicateProject(
     updatedAt: serverTimestamp(),
   });
 
+  try {
+    await upsertProjectMembership({ projectId: newRef.id, workspaceId, uid: requestedBy.uid, role: "owner", addedBy: requestedBy.uid });
+  } catch (err) {
+    console.error("[projectService.duplicateProject] owner project_members write failed (project was still created):", err);
+  }
+
   return newRef.id;
 }
 
@@ -270,7 +323,7 @@ export async function togglePinned(workspaceId: string, projectId: string, uid: 
   });
 }
 
-export async function addProjectMember(workspaceId: string, projectId: string, member: ProjectMember): Promise<void> {
+export async function addProjectMember(workspaceId: string, projectId: string, member: ProjectMember, addedBy: string): Promise<void> {
   const existing = await getProject(workspaceId, projectId);
   if (!existing) throw new Error("Project not found in this workspace.");
   if (existing.members.some((m) => m.uid === member.uid)) return;
@@ -278,6 +331,11 @@ export async function addProjectMember(workspaceId: string, projectId: string, m
     members: arrayUnion(member),
     updatedAt: serverTimestamp(),
   });
+  // Real access-control record — see upsertProjectMembership's doc
+  // comment. Without this, the array write above updates DISPLAY
+  // data only; the new member still couldn't see the project at all
+  // under the membership-filtered visibility model.
+  await upsertProjectMembership({ projectId, workspaceId, uid: member.uid, role: member.role, addedBy });
 }
 
 export async function removeProjectMember(workspaceId: string, projectId: string, member: ProjectMember): Promise<void> {
@@ -287,6 +345,10 @@ export async function removeProjectMember(workspaceId: string, projectId: string
     members: arrayRemove(member),
     updatedAt: serverTimestamp(),
   });
+  // Deleting the access-control record is what actually revokes
+  // visibility (Scenario E: removed member loses access immediately)
+  // — removing from the display array alone would not.
+  await deleteDoc(projectMemberDoc(projectId, member.uid));
 }
 
 export async function updateProjectMemberRole(
@@ -302,6 +364,81 @@ export async function updateProjectMemberRole(
     members: nextMembers,
     updatedAt: serverTimestamp(),
   });
+  await updateDoc(projectMemberDoc(projectId, uid), { role, updatedAt: serverTimestamp() } as never);
+}
+
+/** Every project a UID has explicit access to within one workspace — the source query for the membership-filtered project list (see useProjects.ts). Never fetches project DOCUMENTS themselves; callers fetch only the ones this returns. */
+export async function getMyProjectIds(workspaceId: string, uid: string): Promise<string[]> {
+  const q = query(projectMembersCol(), where("workspaceId", "==", workspaceId), where("uid", "==", uid));
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map((d) => d.data().projectId);
+}
+
+/** A single UID's membership record for one project, or null if they have none — used by the project-detail authorization gate (see ProjectDetailsContext.tsx). */
+export async function getProjectMembership(projectId: string, uid: string): Promise<ProjectMembership | null> {
+  const snapshot = await getDoc(projectMemberDoc(projectId, uid));
+  return snapshot.exists() ? snapshot.data() : null;
+}
+
+/**
+ * ONE-TIME, PURELY ADDITIVE migration for the project-level access
+ * model: backfills a real `project_members` record for every entry
+ * already present in each existing project's denormalized
+ * `Project.members[]` array — the safest possible source of truth for
+ * "who was already intended to have access to this project", since
+ * every project's array has always included at least its owner (set
+ * at creation, see createProject above) and anyone explicitly invited
+ * via the existing Project Members tab.
+ *
+ * Deliberately does NOT delete, overwrite, or reinterpret anything:
+ * - Never touches `Project.members[]` itself.
+ * - Skips any (projectId, uid) pair that already has a project_members
+ *   doc (idempotent — safe to call repeatedly, e.g. on every Projects
+ *   page load by a workspace owner/admin, without duplicating writes
+ *   or clobbering an already-correct record).
+ * - Never removes access from anyone; a project with an EMPTY
+ *   members[] array (shouldn't happen given createProject's
+ *   invariant, but handled defensively) simply gets no backfilled
+ *   records — its owner (ownerId) is backfilled explicitly below as
+ *   an extra safety net so no project is ever left with zero access
+ *   for its rightful owner.
+ *
+ * Requires the caller to already be authorized to write project_members
+ * for this workspace (workspace owner/admin or IT Support — see
+ * firestore.rules' canManageProject) — called from useProjects.ts only
+ * when that's already true, once per workspace per app session.
+ */
+export async function backfillProjectMemberships(workspaceId: string, actorUid: string): Promise<void> {
+  const projects = await getWorkspaceProjects(workspaceId);
+
+  for (const project of projects) {
+    const membersToBackfill = project.members.length > 0
+      ? project.members.map((m) => ({ uid: m.uid, role: m.role }))
+      : [{ uid: project.ownerId, role: "owner" as ProjectMember["role"] }];
+
+    for (const { uid, role } of membersToBackfill) {
+      if (!uid) continue;
+      try {
+        const existing = await getDoc(projectMemberDoc(project.id, uid));
+        if (existing.exists()) continue; // idempotent — never overwrite an already-migrated or already-current record
+        await setDoc(projectMemberDoc(project.id, uid), {
+          id: `${project.id}_${uid}`,
+          projectId: project.id,
+          workspaceId,
+          uid,
+          role,
+          permissions: [],
+          addedBy: actorUid,
+          addedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        } as never);
+      } catch (err) {
+        // Best-effort per-record: one bad/legacy member entry must
+        // never abort backfilling the rest of the workspace's projects.
+        console.error(`[projectService.backfillProjectMemberships] failed for project ${project.id}, uid ${uid}:`, err);
+      }
+    }
+  }
 }
 
 export async function getRecentProjects(workspaceId: string, take = 5): Promise<Project[]> {

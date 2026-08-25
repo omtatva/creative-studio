@@ -1,15 +1,60 @@
 rules_version = '2';
 
 // Mirrors the Firestore tenancy model: every object lives under
-// workspaces/{workspaceId}/... and only signed-in members of that
-// workspace may read; only signed-in users may write (tighten to
-// role checks once uploads are wired to real features).
+// workspaces/{workspaceId}/... Historically every sub-path here has
+// shared one blanket "any signed-in user" rule, which is loose but
+// matched Firestore's own (equally loose, now tightened) posture at
+// the time.
+//
+// `branding/**` is the one sub-path tightened here to real per-
+// workspace access, matching the Settings > Branding logo feature:
+// only members of THAT workspace may read a workspace's branding
+// assets, and only that workspace's owner/admin (or the designated
+// IT Support account — see firestore.rules' isItSupport(), same
+// email-claim check) may write them. Everything else keeps its
+// existing behavior unchanged — this is deliberately a single match
+// block with the resource-type segment captured as a variable
+// (`resourceType`) and branched on inline, NOT two overlapping
+// `match` blocks, because Storage (like Firestore) rules do not
+// "more-specific-wins" across independently declared sibling
+// matches — a broad catch-all matching the same path would otherwise
+// silently coexist with a tighter one via OR, undermining it.
 
 service firebase.storage {
   match /b/{bucket}/o {
-    match /workspaces/{workspaceId}/{allPaths=**} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null;
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Same check as firestore.rules' isItSupport() — verified Firebase
+    // ID token claims, not anything the client supplied.
+    function isItSupport() {
+      return isSignedIn()
+        && request.auth.token.email == 'itsupport@omtatvadigitals.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    function isWorkspaceMember(workspaceId) {
+      return isSignedIn() &&
+        firestore.exists(/databases/(default)/documents/members/$(workspaceId + '_' + request.auth.uid));
+    }
+
+    function workspaceMemberRole(workspaceId) {
+      return firestore.get(/databases/(default)/documents/members/$(workspaceId + '_' + request.auth.uid)).data.role;
+    }
+
+    function isWorkspaceAdmin(workspaceId) {
+      return isWorkspaceMember(workspaceId) && workspaceMemberRole(workspaceId) in ['owner', 'admin'];
+    }
+
+    match /workspaces/{workspaceId}/{resourceType}/{allPaths=**} {
+      allow read: if resourceType == 'branding'
+        ? (isWorkspaceMember(workspaceId) || isItSupport())
+        : isSignedIn();
+      allow write: if resourceType == 'branding'
+        ? (isWorkspaceAdmin(workspaceId) || isItSupport())
+        : isSignedIn();
     }
   }
 }

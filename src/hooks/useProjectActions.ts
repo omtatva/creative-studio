@@ -109,7 +109,12 @@ export function useProjectActions() {
     // render and never updates within this same call. Callers must use
     // the returned `error` field, not `actions.error`, to get the real
     // message synchronously.
-    if (result.data) router.push(projectRoute(result.data));
+    // Straight to Members, not Overview — a brand-new project starts
+    // with ONLY its creator as a project member (see
+    // projectService.createProject), so the natural next step is
+    // adding the rest of the team, reusing the existing Members tab
+    // (ProjectMembersTab.tsx) rather than a separate "onboarding" flow.
+    if (result.data) router.push(projectRoute(result.data, "members"));
     return result;
   }
 
@@ -152,7 +157,8 @@ export function useProjectActions() {
 
   async function addMember(projectId: string, member: ProjectMember) {
     if (!workspaceId) return { data: null, error: "No active workspace found. Please refresh and try again." };
-    return run(() => projectService.addProjectMember(workspaceId, projectId, member));
+    if (!firebaseUser) return { data: null, error: "You're not signed in. Please refresh and log in again." };
+    return run(() => projectService.addProjectMember(workspaceId, projectId, member, firebaseUser.uid));
   }
 
   async function removeMember(projectId: string, member: ProjectMember) {

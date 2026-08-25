@@ -67,6 +67,118 @@ service cloud.firestore {
         && isPendingInviteMatch(data.sourceInviteId, data);
     }
 
+    // The single designated IT Support account — global read access
+    // across every workspace/project (see the "IT Support" section of
+    // the project-access model). Checked against
+    // request.auth.token.email/email_verified, which come from the
+    // caller's signed Firebase ID token, NOT anything the client sent
+    // in a request body — a workspace admin cannot forge this without
+    // actually controlling itsupport@omtatvadigitals.com's real
+    // Google account. See lib/constants/itSupport.ts for the
+    // client-side mirror of this same check (used only to decide
+    // which query to run — this rule is the real gate).
+    function isItSupport() {
+      return isSignedIn()
+        && request.auth.token.email == 'itsupport@omtatvadigitals.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    // Real, queryable project-level access-control record — see
+    // ProjectMembership's doc comment in types/project.types.ts.
+    // Workspace membership alone no longer implies project visibility;
+    // this (plus the owner/admin/IT-Support bypasses below) is what
+    // does.
+    function isProjectMember(projectId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/project_members/$(projectId + '_' + request.auth.uid));
+    }
+
+    function projectMemberRole(projectId) {
+      return get(/databases/$(database)/documents/project_members/$(projectId + '_' + request.auth.uid)).data.role;
+    }
+
+    // Project-level owner/manager — distinct from WORKSPACE owner/admin
+    // (isWorkspaceMemberWithRole). Lets a project owner/manager who
+    // isn't a workspace admin still manage their own project's
+    // team/settings (see ProjectRole in types/project.types.ts —
+    // owner/manager/editor/viewer; owner+manager can manage, matching
+    // the existing Project Members tab's intent).
+    function isProjectAdmin(projectId) {
+      return isProjectMember(projectId) && projectMemberRole(projectId) in ['owner', 'manager'];
+    }
+
+    // The read gate for every project-SCOPED resource (the project
+    // itself, its tasks/board/files/reviews/stages and their
+    // subcollections): workspace owner/admin, IT Support, or an
+    // explicit project_members record — ANY role, including viewer.
+    // A plain workspace member/viewer with no project_members doc for
+    // this project sees NOTHING here — this is the actual fix for
+    // "workspace membership must not automatically grant project
+    // visibility."
+    function canAccessProject(workspaceId, projectId) {
+      return isItSupport()
+        || isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin'])
+        || isProjectMember(projectId);
+    }
+
+    // The write gate for ordinary project WORK (tasks/board/files/
+    // stages create/update/delete): same as canAccessProject except a
+    // project-level 'viewer' is excluded — read-only per ProjectRole's
+    // doc comment. Workspace owner/admin and IT Support are unaffected
+    // (they bypass project role entirely, same as canAccessProject).
+    function canWriteProject(workspaceId, projectId) {
+      return isItSupport()
+        || isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin'])
+        || (isProjectMember(projectId) && projectMemberRole(projectId) != 'viewer');
+    }
+
+    // The write/manage gate for project-level administration (project
+    // settings, and project_members itself): workspace owner/admin,
+    // IT Support, or a project-level owner/manager.
+    function canManageProject(workspaceId, projectId) {
+      return isItSupport()
+        || isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin'])
+        || isProjectAdmin(projectId);
+    }
+
+    // Google-Sheets-style link sharing for ONE file at a time (see
+    // FileShareSettings in types/file.types.ts) — deliberately separate
+    // from canAccessProject/canWriteProject above: a shared file grants
+    // access to THAT FILE (and its own comments/annotations) only, never
+    // to the rest of the project, and never to write actions beyond
+    // adding a comment/annotation (no new versions, no delete, no
+    // settings). `fileData` is the plain map from a file doc's `.data`
+    // (either `resource.data` on the file itself, or a parent `get()...
+    // .data` from the comments/annotations subcollections below) — never
+    // `resource` itself, so this is always null-safe against a
+    // not-yet-existing document the same way the rest of this file
+    // guards `resource != null` before touching `resource.data`.
+    //
+    // "anyone" requires no workspace/project relationship at all — that
+    // IS the point of that visibility level, matching an unauthenticated
+    // Google Sheets link. "organization" requires real workspace
+    // membership (isWorkspaceMember, which itself requires isSignedIn())
+    // but explicitly bypasses project membership, since the whole point
+    // of this feature is reaching a file without being added to its
+    // project.
+    function isSharedFile(fileData) {
+      return 'shareSettings' in fileData
+        && fileData.shareSettings != null
+        && (
+          fileData.shareSettings.visibility == 'anyone'
+          || (fileData.shareSettings.visibility == 'organization' && isWorkspaceMember(fileData.workspaceId))
+        );
+    }
+
+    // The write gate for a shared-link visitor: everything isSharedFile
+    // already requires, PLUS the file owner must have explicitly picked
+    // "Commenter" (not "Viewer"), PLUS the visitor must be signed in
+    // (real account OR Firebase Anonymous Auth — see lib/firebase/auth's
+    // signInGuest) as a basic anti-abuse floor even under "anyone".
+    function canCommentOnSharedFile(fileData) {
+      return isSignedIn() && isSharedFile(fileData) && fileData.shareSettings.permission == 'comment';
+    }
+
     match /users/{uid} {
       allow read, write: if isSelf(uid);
     }
@@ -88,8 +200,27 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // See FileShareLookup's doc comment in types/file.types.ts — a tiny
+    // ID-keyed routing doc (never the file content itself) the public
+    // /share/[shareToken] page resolves BEFORE it knows which workspace/
+    // project/file a token even belongs to. `isSignedIn()` (not
+    // `isItSupport()`/membership — this collection has no such concept)
+    // is the read gate: the share page signs the visitor in anonymously
+    // first (see lib/firebase/auth's signInGuest) even for "anyone"-mode
+    // links with no visible sign-in form, so this still requires SOME
+    // real Firebase Auth credential rather than a fully open `if true` —
+    // no collection in this app has ever needed that, and this one
+    // doesn't either. Knowing fileId/workspaceId/projectId alone grants
+    // nothing further — every other collection's real rules still apply
+    // in full (see isSharedFile() on `files` itself).
+    match /file_shares/{shareToken} {
+      allow read: if isSignedIn();
+      allow create, update: if canWriteProject(request.resource.data.workspaceId, request.resource.data.projectId);
+      allow delete: if canWriteProject(resource.data.workspaceId, resource.data.projectId);
+    }
+
     match /workspaces/{workspaceId} {
-      allow read: if isWorkspaceMember(workspaceId);
+      allow read: if isWorkspaceMember(workspaceId) || isItSupport();
       allow create: if isSignedIn();
       // Profile fields (name, logo, timezone, ...) are editable by
       // owner OR admin, matching every other "manage this workspace"
@@ -158,7 +289,13 @@ service cloud.firestore {
     }
 
     match /settings/{workspaceId} {
-      allow read: if isWorkspaceMember(workspaceId);
+      // Branding (logo/favicon/backgrounds/colors) lives on this same
+      // doc (settings.branding) — isItSupport() added to both read
+      // and update so the designated IT Support account can view and
+      // manage any workspace's branding, not just workspaces it's
+      // actually a member of, per the project-access model's global
+      // IT Support grant (see the isItSupport() function above).
+      allow read: if isWorkspaceMember(workspaceId) || isItSupport();
       // CREATE happens inside workspaceService.createWorkspace()'s
       // transaction, in the same transaction that creates the
       // workspaces/{workspaceId} doc itself — a rule that does
@@ -176,7 +313,7 @@ service cloud.firestore {
       // permission-denied error the UI could only surface as a toast.
       // DELETE stays owner-only (no real UI path deletes this doc).
       allow create: if isSignedIn() && request.resource.data.workspaceId == workspaceId;
-      allow update: if isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin']);
+      allow update: if isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin']) || isItSupport();
       allow delete: if isWorkspaceOwner(workspaceId);
     }
 
@@ -184,30 +321,150 @@ service cloud.firestore {
     // field (see lib/firebase/firestore.ts). Every rule below re-checks
     // that field so a request can never read/write a project outside
     // the caller's own workspace, independent of query-side filters.
+    //
+    // READ is project-membership-gated (canAccessProject), not just
+    // workspace membership — this is the core of the project-access
+    // model: belonging to a workspace no longer implies visibility
+    // into every project in it. CREATE stays workspace-level (any
+    // non-viewer workspace member can start a new project — the
+    // CREATOR then becomes that project's own first project_members
+    // record via projectService.createProject, never every workspace
+    // member automatically). UPDATE/DELETE are tightened from "any
+    // workspace member" to canManageProject (project-level or
+    // workspace-level owner/admin, or IT Support).
     match /projects/{projectId} {
-      allow read: if isWorkspaceMember(resource.data.workspaceId);
+      allow read: if canAccessProject(resource.data.workspaceId, projectId);
       // Restricted to owner/admin/member — a viewer can see projects
       // but not create them. (No "manager" role exists in this app's
       // model; using the real MemberRole enum rather than inventing one.)
       allow create: if isWorkspaceMemberWithRole(request.resource.data.workspaceId, ['owner', 'admin', 'member']);
-      allow update: if isWorkspaceMember(resource.data.workspaceId)
+      allow update: if canManageProject(resource.data.workspaceId, projectId)
         && request.resource.data.workspaceId == resource.data.workspaceId;
-      allow delete: if isWorkspaceMember(resource.data.workspaceId);
+      allow delete: if canManageProject(resource.data.workspaceId, projectId);
     }
 
-    // Tasks mirror the `projects` access shape. Comments/attachments/
-    // activity are subcollections, so membership is re-checked via
-    // get() on the parent task rather than duplicating a workspaceId
-    // field on every subdocument.
+    // Real, queryable project-level access-control records — see
+    // ProjectMembership's doc comment in types/project.types.ts. Doc
+    // id is `${projectId}_${uid}`; membershipId.split('_') recovers
+    // both parts even when the doc doesn't exist yet (needed for
+    // create, and for a self-read that correctly resolves to "no
+    // membership" instead of erroring).
+    match /project_members/{membershipId} {
+      // Firestore does NOT filter query results against security
+      // rules — for a `list` (query) request, it statically checks
+      // whether the rule is PROVABLY satisfied using only the fields
+      // the query itself filters on. useAccessibleProjectIds.ts (the
+      // shared resolver behind the Projects page, My Tasks, Files,
+      // Reviews, and Calendar for every non-admin user) runs
+      // `where("workspaceId","==",X).where("uid","==",myUid)` — so the
+      // rule MUST include a clause written in terms of
+      // `resource.data.uid`, not just the document id, or Firestore
+      // rejects the entire query with "Missing or insufficient
+      // permissions" before it ever runs, even though every document
+      // it would have returned genuinely belongs to the caller. This
+      // was the actual bug: the self-access clause below used to be
+      // `membershipId.split('_')[1] == request.auth.uid` only — correct
+      // for a direct `get()` by id (still kept, for the "does this
+      // exact project_id_uid doc exist" case used elsewhere), but
+      // invisible to Firestore's query-compatibility check, since it
+      // doesn't reference a queried field at all.
+      // Clause order matters here, not just content: `resource.data.*`
+      // must never be reached when `resource` could be null (a get()
+      // on a project_members doc that doesn't exist yet — e.g. an
+      // employee who hasn't been added to this project — must resolve
+      // to "no access", not a rules-evaluation error). The doc-id
+      // clause and isItSupport() are evaluated first because neither
+      // touches `resource`; every clause that reads `resource.data` is
+      // explicitly guarded with `resource != null &&` so `||`'s
+      // short-circuit never lets a null-dereference throw.
+      // A workspace/project admin ADDING a brand-new member needs to
+      // read this doc BEFORE it exists (projectService.upsertProjectMembership
+      // does a getDoc() first, to decide whether to preserve an
+      // existing addedAt) — the two `resource != null`-guarded clauses
+      // above can never authorize that, since resource IS null for a
+      // membership that doesn't exist yet. Without this clause, adding
+      // a genuinely NEW member throws permission-denied on that
+      // pre-check, silently failing to create the real access-control
+      // record even though the (separate, unprotected) embedded
+      // Project.members[] array write right before it already
+      // succeeded — exactly the "added but still can't see the
+      // project" bug. This clause depends only on the projects
+      // collection (which always exists once a project is created)
+      // and the membershipId's own path segments, so it works whether
+      // or not the project_members doc itself exists yet.
+      function targetProjectWorkspaceId() {
+        return get(/databases/$(database)/documents/projects/$(membershipId.split('_')[0])).data.workspaceId;
+      }
+
+      allow read: if isSignedIn() && (
+        membershipId.split('_')[1] == request.auth.uid
+        || isItSupport()
+        || (resource != null && resource.data.uid == request.auth.uid)
+        || (resource != null && isWorkspaceMemberWithRole(resource.data.workspaceId, ['owner', 'admin']))
+        || canManageProject(targetProjectWorkspaceId(), membershipId.split('_')[0])
+      );
+
+      // Only someone who can already MANAGE the target project
+      // (workspace owner/admin, IT Support, or that project's own
+      // owner/admin) may add a member — never the invitee themselves
+      // (closes Scenario C: a user granting themselves access to a
+      // project they're not authorized on). The target uid must
+      // already be a member of the SAME workspace the project belongs
+      // to (never an arbitrary user, never cross-workspace), and the
+      // doc's own workspaceId/projectId/uid must be internally
+      // consistent with its own document id.
+      allow create: if (
+          // BOOTSTRAP ONLY: the project's own creator claiming their
+          // OWN owner-role membership record immediately after
+          // creating the project itself (see
+          // projectService.createProject/duplicateProject, which
+          // write the project doc BEFORE this, sequentially, so this
+          // get() sees committed data). Mirrors the same pattern the
+          // `members` collection above uses for the analogous
+          // workspace-owner bootstrap problem. Nobody can self-assign
+          // 'owner' here unless the project doc already says they are
+          // its real owner.
+          (request.resource.data.uid == request.auth.uid
+            && request.resource.data.role == 'owner'
+            && get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.ownerId == request.auth.uid)
+          || canManageProject(request.resource.data.workspaceId, request.resource.data.projectId)
+        )
+        && request.resource.data.projectId == membershipId.split('_')[0]
+        && request.resource.data.uid == membershipId.split('_')[1]
+        && isWorkspaceMember(request.resource.data.workspaceId)
+        && exists(/databases/$(database)/documents/members/$(request.resource.data.workspaceId + '_' + request.resource.data.uid))
+        && get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.workspaceId == request.resource.data.workspaceId;
+
+      allow update: if canManageProject(resource.data.workspaceId, resource.data.projectId)
+        && request.resource.data.workspaceId == resource.data.workspaceId
+        && request.resource.data.projectId == resource.data.projectId
+        && request.resource.data.uid == resource.data.uid;
+
+      allow delete: if canManageProject(resource.data.workspaceId, resource.data.projectId);
+    }
+
+    // Tasks mirror the `projects` access shape — project-membership-
+    // gated. useTasks.ts / useCalendarTasks.ts's workspace-wide "My
+    // Tasks"/Calendar views (no explicit projectId) now pre-filter
+    // their OWN query to the caller's accessible project ids first
+    // (see useAccessibleProjectIds.ts) for anyone who isn't a
+    // workspace owner/admin/IT Support — so every task a query like
+    // that could possibly return already belongs to a project this
+    // rule will allow, and Firestore's "reject the whole query if any
+    // matched doc fails the rule" behavior never trips. Comments/
+    // attachments/activity are subcollections, so membership is re-
+    // checked via get() on the parent task rather than duplicating a
+    // workspaceId/projectId field on every subdocument.
     match /tasks/{taskId} {
-      allow read: if isWorkspaceMember(resource.data.workspaceId);
-      allow create: if isWorkspaceMember(request.resource.data.workspaceId);
-      allow update: if isWorkspaceMember(resource.data.workspaceId)
+      allow read: if canAccessProject(resource.data.workspaceId, resource.data.projectId);
+      allow create: if canWriteProject(request.resource.data.workspaceId, request.resource.data.projectId);
+      allow update: if canWriteProject(resource.data.workspaceId, resource.data.projectId)
         && request.resource.data.workspaceId == resource.data.workspaceId;
-      allow delete: if isWorkspaceMember(resource.data.workspaceId);
+      allow delete: if canWriteProject(resource.data.workspaceId, resource.data.projectId);
 
       function isParentTaskMember() {
-        return isWorkspaceMember(get(/databases/$(database)/documents/tasks/$(taskId)).data.workspaceId);
+        let parent = get(/databases/$(database)/documents/tasks/$(taskId)).data;
+        return canAccessProject(parent.workspaceId, parent.projectId);
       }
 
       match /comments/{commentId} {
@@ -232,24 +489,33 @@ service cloud.firestore {
     // requiring a join through the parent board) so they can be
     // queried and rule-checked directly.
     match /boards/{boardId} {
-      allow read: if isWorkspaceMember(resource.data.workspaceId);
-      allow create: if isWorkspaceMember(request.resource.data.workspaceId);
-      allow update: if isWorkspaceMember(resource.data.workspaceId)
+      allow read: if canAccessProject(resource.data.workspaceId, resource.data.projectId);
+      allow create: if canWriteProject(request.resource.data.workspaceId, request.resource.data.projectId);
+      allow update: if canWriteProject(resource.data.workspaceId, resource.data.projectId)
         && request.resource.data.workspaceId == resource.data.workspaceId;
-      allow delete: if isWorkspaceMember(resource.data.workspaceId);
+      allow delete: if canWriteProject(resource.data.workspaceId, resource.data.projectId);
 
       match /activity/{activityId} {
-        allow read, create: if isWorkspaceMember(get(/databases/$(database)/documents/boards/$(boardId)).data.workspaceId);
+        function parentBoard() {
+          return get(/databases/$(database)/documents/boards/$(boardId)).data;
+        }
+        allow read, create: if canAccessProject(parentBoard().workspaceId, parentBoard().projectId);
         allow update, delete: if false;
       }
     }
 
+    // board_columns only carries `boardId`+`workspaceId` (no direct
+    // projectId — see board.types.ts), so project access is checked
+    // via the parent board doc.
     match /board_columns/{columnId} {
-      allow read: if isWorkspaceMember(resource.data.workspaceId);
-      allow create: if isWorkspaceMember(request.resource.data.workspaceId);
-      allow update: if isWorkspaceMember(resource.data.workspaceId)
+      function parentBoardOf(boardId) {
+        return get(/databases/$(database)/documents/boards/$(boardId)).data;
+      }
+      allow read: if canAccessProject(resource.data.workspaceId, parentBoardOf(resource.data.boardId).projectId);
+      allow create: if canWriteProject(request.resource.data.workspaceId, parentBoardOf(request.resource.data.boardId).projectId);
+      allow update: if canWriteProject(resource.data.workspaceId, parentBoardOf(resource.data.boardId).projectId)
         && request.resource.data.workspaceId == resource.data.workspaceId;
-      allow delete: if isWorkspaceMember(resource.data.workspaceId);
+      allow delete: if canWriteProject(resource.data.workspaceId, parentBoardOf(resource.data.boardId).projectId);
     }
 
     // Preferences are personal: any workspace member can read them
@@ -264,66 +530,104 @@ service cloud.firestore {
 
     // Files back the Files module AND the Creative Workspace — same
     // collection, same rule, per creative-studio/[projectId]'s "one
-    // source of truth" requirement. Comments are a subcollection
-    // scoped to their parent file's workspace (isParentFileMember),
-    // mirroring tasks/{taskId}/comments above; only the comment's own
-    // author may edit/delete it (or resolve it — resolving is treated
-    // as an update any workspace member may make, since reviewers
-    // resolving someone else's comment is normal review workflow).
+    // source of truth" requirement. Project-membership-gated, same as
+    // `tasks` above — useFiles.ts's workspace-wide view pre-filters by
+    // accessible project ids for anyone who isn't workspace owner/
+    // admin/IT Support (see useAccessibleProjectIds.ts). Comments are
+    // a subcollection scoped to their parent file's workspace
+    // (isParentFileMember), mirroring tasks/{taskId}/comments above;
+    // only the comment's own author may edit/delete it (or resolve it
+    // — resolving is treated as an update any project member may
+    // make, since reviewers resolving someone else's comment is normal
+    // review workflow).
     match /files/{fileId} {
-      allow read: if isWorkspaceMember(resource.data.workspaceId);
-      allow create: if isWorkspaceMember(request.resource.data.workspaceId);
-      allow update: if isWorkspaceMember(resource.data.workspaceId)
+      // isSharedFile lets a link-sharing visitor (organization or anyone —
+      // see FileShareSettings) open THIS file without project membership;
+      // it never appears in create/update/delete below — sharing only
+      // ever grants reading the file + commenting on it, never editing
+      // the file record itself (that stays canWriteProject-gated, same as
+      // always, so only a real project member/admin can toggle sharing
+      // on/off in the first place).
+      allow read: if canAccessProject(resource.data.workspaceId, resource.data.projectId) || isSharedFile(resource.data);
+      allow create: if canWriteProject(request.resource.data.workspaceId, request.resource.data.projectId);
+      allow update: if canWriteProject(resource.data.workspaceId, resource.data.projectId)
         && request.resource.data.workspaceId == resource.data.workspaceId;
-      allow delete: if isWorkspaceMember(resource.data.workspaceId);
+      allow delete: if canWriteProject(resource.data.workspaceId, resource.data.projectId);
 
       function isParentFileMember() {
-        return isWorkspaceMember(get(/databases/$(database)/documents/files/$(fileId)).data.workspaceId);
+        let parent = get(/databases/$(database)/documents/files/$(fileId)).data;
+        return canAccessProject(parent.workspaceId, parent.projectId);
+      }
+
+      // Broader than isParentFileMember above: also true for a
+      // link-sharing visitor who can merely VIEW the file (any
+      // visibility level, regardless of permission) — used for read only.
+      function isParentFileReadable() {
+        let parent = get(/databases/$(database)/documents/files/$(fileId)).data;
+        return canAccessProject(parent.workspaceId, parent.projectId) || isSharedFile(parent);
+      }
+
+      // Used for create only: a real project member with write access,
+      // OR a link-sharing visitor whose file is specifically shared with
+      // "Commenter" (not "Viewer") permission.
+      function canCreateOnParentFile() {
+        let parent = get(/databases/$(database)/documents/files/$(fileId)).data;
+        return canWriteProject(parent.workspaceId, parent.projectId) || canCommentOnSharedFile(parent);
       }
 
       match /comments/{commentId} {
-        allow read, create: if isParentFileMember();
+        allow read: if isParentFileReadable();
+        allow create: if canCreateOnParentFile();
+        // Resolving/editing an EXISTING comment stays real-membership-only
+        // (isParentFileMember, no shared-link fallback) — a link visitor
+        // can add their own feedback but shouldn't get to resolve or
+        // rewrite anyone's comment thread.
         allow update: if isParentFileMember();
-        allow delete: if isParentFileMember()
+        // Deleting your OWN comment is allowed for anyone who can read the
+        // thread at all (member or shared visitor) — undoing your own
+        // mistake isn't a moderation action the way resolving is.
+        allow delete: if isParentFileReadable()
           && (resource.data.authorId == request.auth.uid);
       }
 
       // Drawn annotations (circle/rectangle/arrow/freehand/text) on
-      // the review canvas — sibling to comments, same parent-
-      // membership read/create gate, but no shared "resolve" concept
-      // the way comments have, so update/delete is author-only.
+      // the review canvas — sibling to comments, same read/create/
+      // author-only-write split as above.
       match /annotations/{annotationId} {
-        allow read, create: if isParentFileMember();
-        allow update, delete: if isParentFileMember()
+        allow read: if isParentFileReadable();
+        allow create: if canCreateOnParentFile();
+        allow update, delete: if isParentFileReadable()
           && (resource.data.authorId == request.auth.uid);
       }
     }
 
-    // Any member can REQUEST a review (create), but deciding one
-    // (the only thing `update` is ever used for — see
+    // Any project member can REQUEST a review (create), but deciding
+    // one (the only thing `update` is ever used for — see
     // reviewService.decideReview, which is the sole updateDoc() call
-    // against this collection) is restricted to owner/admin, matching
-    // the same isWorkspaceMemberWithRole gate the UI uses (see
-    // useCurrentMemberRole.canApproveReviews) so a member/viewer can't
-    // approve their own — or anyone's — review by calling the SDK
-    // directly, bypassing the UI check.
+    // against this collection) is restricted to workspace owner/admin
+    // or a project-level owner/manager (canManageProject) — a plain
+    // editor/viewer can't approve their own — or anyone's — review by
+    // calling the SDK directly, bypassing the UI check. Project-
+    // membership-gated, same as `tasks`/`files` above — useReviews.ts's
+    // workspace-wide view pre-filters by accessible project ids for
+    // anyone who isn't workspace owner/admin/IT Support.
     match /reviews/{reviewId} {
-      allow read: if isWorkspaceMember(resource.data.workspaceId);
-      allow create: if isWorkspaceMember(request.resource.data.workspaceId);
-      allow update: if isWorkspaceMemberWithRole(resource.data.workspaceId, ['owner', 'admin'])
+      allow read: if canAccessProject(resource.data.workspaceId, resource.data.projectId);
+      allow create: if canWriteProject(request.resource.data.workspaceId, request.resource.data.projectId);
+      allow update: if canManageProject(resource.data.workspaceId, resource.data.projectId)
         && request.resource.data.workspaceId == resource.data.workspaceId;
-      allow delete: if isWorkspaceMember(resource.data.workspaceId);
+      allow delete: if canWriteProject(resource.data.workspaceId, resource.data.projectId);
     }
 
     // Creative Stages — same top-level-collection-with-workspaceId(+projectId)
     // access shape as files/reviews/tasks (see stage.types.ts for why
     // this isn't nested under a projects/{id} doc).
     match /stages/{stageId} {
-      allow read: if isWorkspaceMember(resource.data.workspaceId);
-      allow create: if isWorkspaceMember(request.resource.data.workspaceId);
-      allow update: if isWorkspaceMember(resource.data.workspaceId)
+      allow read: if canAccessProject(resource.data.workspaceId, resource.data.projectId);
+      allow create: if canWriteProject(request.resource.data.workspaceId, request.resource.data.projectId);
+      allow update: if canWriteProject(resource.data.workspaceId, resource.data.projectId)
         && request.resource.data.workspaceId == resource.data.workspaceId;
-      allow delete: if isWorkspaceMember(resource.data.workspaceId);
+      allow delete: if canWriteProject(resource.data.workspaceId, resource.data.projectId);
     }
 
     // Only owner/admin may create, update (resend/cancel), or delete

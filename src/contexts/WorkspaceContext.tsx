@@ -1,9 +1,12 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { getDocs } from "firebase/firestore";
 import { useAuthContext } from "./AuthContext";
 import { getWorkspace, setActiveWorkspace } from "@/services/workspaceService";
 import { getUserWorkspaceMemberships } from "@/services/userService";
+import { workspacesCol } from "@/lib/firebase/firestore";
+import { isItSupportUser } from "@/lib/constants/itSupport";
 import { Workspace } from "@/types/workspace.types";
 
 /**
@@ -77,6 +80,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   async function loadMemberships(uid: string) {
     try {
+      // IT Support (see lib/constants/itSupport.ts) gets every
+      // workspace, not just ones they hold a `members` doc for —
+      // matches firestore.rules' isItSupport() bypass on the
+      // `workspaces` collection's read rule. Everyone else keeps the
+      // exact existing behavior: only workspaces they actually belong
+      // to.
+      if (isItSupportUser(firebaseUser)) {
+        const snapshot = await getDocs(workspacesCol());
+        setWorkspaces(snapshot.docs.map((d) => d.data()));
+        return;
+      }
       const memberships = await getUserWorkspaceMemberships(uid);
       const results = await Promise.all(memberships.map((m) => getWorkspace(m.workspaceId)));
       setWorkspaces(results.filter((w): w is Workspace => w !== null));

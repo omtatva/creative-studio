@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { AnimatePresence } from "framer-motion";
 import { Maximize, Pause, Play, RotateCcw, RotateCw, Volume1, Volume2, VolumeX } from "lucide-react";
 import { AnnotationOverlay } from "./AnnotationOverlay";
 import { AnnotationTool } from "./AnnotationToolbar";
+import { MarkerCommentComposer } from "./MarkerCommentComposer";
+import type { PendingMarker } from "./ReviewPanel";
 import { cn } from "@/lib/utils/cn";
 import { formatDuration } from "@/lib/utils/fileFormat";
 import { getMarkerColor } from "@/lib/utils/markerColor";
@@ -25,6 +28,10 @@ interface VideoReviewCanvasProps {
   onCreateShape: (data: AnnotationData, timestampSeconds: number) => void;
   onSelectComment: (commentId: string) => void;
   onDeleteAnnotation?: (annotationId: string) => void;
+  /** Set right after placing a marker or drawing a shape — renders the floating in-context composer (see MarkerCommentComposer) until submitted or cancelled. */
+  pendingMarker: PendingMarker | null;
+  onSubmitPendingComment: (body: string) => Promise<boolean>;
+  onCancelPendingComment: () => void;
 }
 
 export function VideoReviewCanvas({
@@ -41,10 +48,23 @@ export function VideoReviewCanvas({
   onCreateShape,
   onSelectComment,
   onDeleteAnnotation,
+  pendingMarker,
+  onSubmitPendingComment,
+  onCancelPendingComment,
 }: VideoReviewCanvasProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
+  // Scrubbing coalesces every pointermove into at most one real seek
+  // per animation frame (~60/s) instead of one per raw pointer event
+  // (which can fire well over 100/s) — setting video.currentTime is a
+  // real decode operation, not a cheap property write, so firing it
+  // uncoalesced floods the browser's media pipeline with seek requests
+  // faster than it can service them, and the visible frame lags
+  // noticeably behind the pointer. This is the same rAF-coalescing
+  // pattern already used for the landing page's scroll-scrubbed video.
+  const pendingSeekRef = useRef<number | null>(null);
+  const seekRafRef = useRef<number | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(asset.durationSeconds ?? 0);
@@ -120,13 +140,26 @@ export function VideoReviewCanvas({
     else video.pause();
   }
 
+  function flushSeek() {
+    seekRafRef.current = null;
+    const time = pendingSeekRef.current;
+    if (time === null || !videoRef.current) return;
+    videoRef.current.currentTime = time;
+    setCurrentTime(time);
+  }
+
   function seekToClientX(bar: HTMLDivElement, clientX: number) {
     const rect = bar.getBoundingClientRect();
     const fraction = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-    const time = fraction * duration;
-    if (videoRef.current) videoRef.current.currentTime = time;
-    setCurrentTime(time);
+    pendingSeekRef.current = fraction * duration;
+    if (seekRafRef.current === null) seekRafRef.current = requestAnimationFrame(flushSeek);
   }
+
+  useEffect(() => {
+    return () => {
+      if (seekRafRef.current !== null) cancelAnimationFrame(seekRafRef.current);
+    };
+  }, []);
 
   function toggleFullscreen() {
     if (!containerRef.current) return;
@@ -153,6 +186,16 @@ export function VideoReviewCanvas({
   const MARKER_VISIBILITY_TOLERANCE = 0.5;
   const positionedComments = comments.filter(
     (c) => c.positionX !== null && c.timestampSeconds !== null && Math.abs(currentTime - c.timestampSeconds) <= MARKER_VISIBILITY_TOLERANCE
+  );
+  // Same tolerance-based visibility as comment markers above — a
+  // rectangle/circle/arrow/text annotation is drawn AT a specific
+  // moment (it carries its own timestampSeconds, same as a comment
+  // marker) and should only be visible while playback is at that
+  // moment, not for the entire video. This filter was missing
+  // entirely before, which is why shapes stayed on screen throughout
+  // playback instead of only appearing at the point they were drawn.
+  const positionedAnnotations = annotations.filter(
+    (a) => a.timestampSeconds !== null && Math.abs(currentTime - a.timestampSeconds) <= MARKER_VISIBILITY_TOLERANCE
   );
   const timelineMarkers = comments.filter((c) => c.timestampSeconds !== null);
 
@@ -185,7 +228,7 @@ export function VideoReviewCanvas({
           {contentBox && (
             <div className="absolute" style={{ left: contentBox.left, top: contentBox.top, width: contentBox.width, height: contentBox.height }}>
               <AnnotationOverlay
-                annotations={annotations}
+                annotations={positionedAnnotations}
                 comments={positionedComments}
                 activeTool={activeTool}
                 color={annotationColor}
@@ -195,6 +238,16 @@ export function VideoReviewCanvas({
                 onSelectComment={onSelectComment}
                 onDeleteAnnotation={onDeleteAnnotation}
               />
+
+              {/* Lives in the same positioned box as AnnotationOverlay (not frameRef) so
+                  marker.positionX/positionY — captured there as percentages of THIS box,
+                  see AnnotationOverlay's own click handler — place it at the actual spot the
+                  reviewer marked instead of a fixed top-center that ignores where they clicked. */}
+              <AnimatePresence>
+                {pendingMarker && (
+                  <MarkerCommentComposer marker={pendingMarker} onSubmit={onSubmitPendingComment} onCancel={onCancelPendingComment} />
+                )}
+              </AnimatePresence>
             </div>
           )}
         </div>

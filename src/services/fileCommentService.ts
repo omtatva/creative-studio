@@ -93,17 +93,25 @@ export async function addAssetComment({
 
   await setDoc(commentRef, { ...comment, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
 
-  await logActivity(workspaceId, {
-    actorId: author.uid,
-    actorName: author.displayName,
-    action: parentCommentId
-      ? "replied to a comment"
-      : timestampSeconds !== null
-        ? `commented on an asset at ${Math.floor(timestampSeconds / 60)}:${String(Math.floor(timestampSeconds % 60)).padStart(2, "0")}`
-        : "commented on an asset",
-    targetType: "file",
-    targetId: fileId,
-  });
+  // Best-effort: a shared-link guest commenter (see FileShareSettings)
+  // isn't a workspace member, so this write is denied by
+  // activity_logs' own rules for them — that must not fail the comment
+  // itself, which already succeeded above.
+  try {
+    await logActivity(workspaceId, {
+      actorId: author.uid,
+      actorName: author.displayName,
+      action: parentCommentId
+        ? "replied to a comment"
+        : timestampSeconds !== null
+          ? `commented on an asset at ${Math.floor(timestampSeconds / 60)}:${String(Math.floor(timestampSeconds % 60)).padStart(2, "0")}`
+          : "commented on an asset",
+      targetType: "file",
+      targetId: fileId,
+    });
+  } catch (err) {
+    console.error("[fileCommentService] activity log failed (non-fatal):", err);
+  }
 
   return commentRef.id;
 }

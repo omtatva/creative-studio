@@ -4,9 +4,14 @@ import { ID, Timestamps } from "./common.types";
  * Project-level member role. Deliberately separate from
  * `MemberRole` (workspace.types.ts) — a person's workspace role
  * (owner/admin/member/viewer) is independent from the role they
- * hold on any single project (owner/admin/manager/member).
+ * hold on any single project.
+ *
+ * owner   — full project access, manage members, project settings, delete/archive.
+ * manager — manage project + members (if permitted), tasks/files/reviews.
+ * editor  — work on the project (tasks/files/reviews); cannot manage members.
+ * viewer  — read-only project access (see firestore.rules' canWriteProject).
  */
-export type ProjectRole = "owner" | "admin" | "manager" | "member";
+export type ProjectRole = "owner" | "manager" | "editor" | "viewer";
 
 export interface ProjectMember {
   uid: ID;
@@ -63,6 +68,37 @@ export interface CreateProjectPayload {
 export type UpdateProjectPayload = Partial<
   Omit<Project, "id" | "workspaceId" | "createdAt" | "updatedAt" | "createdBy" | "members" | "ownerId">
 >;
+
+/**
+ * Real, queryable project-level access-control record — the actual
+ * authorization source for "can this Firebase UID see/act on this
+ * project", used by Firestore rules and by useProjects.ts's
+ * membership-filtered list query. Deliberately a separate top-level
+ * collection (`project_members`, doc id `${projectId}_${uid}`)
+ * rather than only the denormalized `Project.members[]` array above:
+ * an array of maps can't be queried ("give me every project where
+ * I'm a member") or cleanly checked in a security rule the way a
+ * scalar `uid` field on its own doc can. `Project.members[]` is kept
+ * as-is, unchanged, purely for display (avatars, member-name search)
+ * — every membership mutation (add/remove/role-change) now writes to
+ * BOTH, so existing UI reading the array keeps working exactly as
+ * before.
+ *
+ * `permissions` is reserved for future fine-grained overrides beyond
+ * what `role` implies; empty until that's needed — nothing reads it
+ * yet.
+ */
+export interface ProjectMembership {
+  id: ID; // `${projectId}_${uid}`
+  projectId: ID;
+  workspaceId: ID;
+  uid: ID;
+  role: ProjectRole;
+  permissions: string[];
+  addedAt: string;
+  addedBy: ID;
+  updatedAt: string;
+}
 
 export type ProjectViewMode = "grid" | "list";
 

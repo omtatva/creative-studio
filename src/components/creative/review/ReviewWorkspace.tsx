@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import { ReviewToolbar } from "./ReviewToolbar";
 import { FileInfoBar } from "./FileInfoBar";
@@ -11,6 +12,7 @@ import { ImageReviewCanvas } from "./ImageReviewCanvas";
 import { PdfReviewCanvas } from "./PdfReviewCanvas";
 import { ReviewPanel, type PendingMarker, type ReviewPanelTab } from "./ReviewPanel";
 import { EditStatusesModal } from "./EditStatusesModal";
+import { ShareFileModal } from "./ShareFileModal";
 import { ConfirmModal } from "@/components/shared/ConfirmModal";
 import { SendForReviewModal } from "@/components/creative/SendForReviewModal";
 import { CreateTaskFromAssetModal } from "@/components/creative/CreateTaskFromAssetModal";
@@ -25,6 +27,7 @@ import { useReviewActions } from "@/hooks/useReviewActions";
 import { useStages } from "@/hooks/useStages";
 import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
 import { useAuthContext } from "@/contexts/AuthContext";
+import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
 import { useProjectDetailsContext } from "@/contexts/ProjectDetailsContext";
 import { useToast } from "@/hooks/useToast";
 import { getUploadValidationError } from "@/lib/constants/creativeFiles";
@@ -35,6 +38,30 @@ import { AssetStatusOption } from "@/types/settings.types";
 import { AssetGroup } from "@/lib/utils/assetVersions";
 
 const DEFAULT_ANNOTATION_COLOR = "#f59e0b";
+
+/**
+ * Where to anchor the comment-marker pin for a just-drawn shape —
+ * AnnotationData's coordinates are 0–1 fractions (see
+ * AnnotationOverlay.tsx), converted here to the 0–100 percentage
+ * scale AssetComment.positionX/positionY already use.
+ */
+export function annotationAnchorPosition(data: AnnotationData): { x: number; y: number } {
+  switch (data.kind) {
+    case "rectangle":
+      return { x: (data.x + data.width / 2) * 100, y: (data.y + data.height / 2) * 100 };
+    case "circle":
+      return { x: data.cx * 100, y: data.cy * 100 };
+    case "arrow":
+      return { x: ((data.x1 + data.x2) / 2) * 100, y: ((data.y1 + data.y2) / 2) * 100 };
+    case "freehand": {
+      const avgX = data.points.reduce((sum, p) => sum + p.x, 0) / data.points.length;
+      const avgY = data.points.reduce((sum, p) => sum + p.y, 0) / data.points.length;
+      return { x: avgX * 100, y: avgY * 100 };
+    }
+    case "text":
+      return { x: data.x * 100, y: data.y * 100 };
+  }
+}
 
 interface ReviewWorkspaceProps {
   projectId: string;
@@ -55,6 +82,7 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
   const router = useRouter();
   const toast = useToast();
   const { firebaseUser } = useAuthContext();
+  const { workspace } = useWorkspaceContext();
   const { project } = useProjectDetailsContext();
 
   const asset: ProjectFile = group.versions.find((v) => v.id === activeFileId) ?? group.latest;
@@ -87,6 +115,7 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
   const [isEditStatusesOpen, setIsEditStatusesOpen] = useState(false);
   const [isSavingStatuses, setIsSavingStatuses] = useState(false);
   const [isArchiveConfirmOpen, setIsArchiveConfirmOpen] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const versionInputRef = useRef<HTMLInputElement>(null);
 
   function goToVersion(v: ProjectFile) {
@@ -97,13 +126,8 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
     router.push(`${projectRoute(projectId, "workspace")}?stage=${stageId}`);
   }
 
-  async function handleShare() {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      toast.success("Link copied to clipboard");
-    } catch {
-      toast.error("Couldn't copy link");
-    }
+  function handleShare() {
+    setIsShareModalOpen(true);
   }
 
   async function handleUploadVersion(file: File | null) {
@@ -162,6 +186,19 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
       timestampSeconds,
       pageNumber,
     });
+    // A drawn shape/text mark has no comment/body field of its own
+    // (see AssetAnnotation in file.types.ts — it's a separate
+    // Firestore subcollection from AssetComment, purely visual) — so
+    // immediately open the SAME comment composer the point-marker tool
+    // uses, pre-positioned at the shape's own anchor point and moment,
+    // letting the reviewer say something about what they just marked.
+    // This reuses the existing pendingMarker/ReviewPanel flow exactly
+    // as-is; the shape itself is already saved above regardless of
+    // whether a comment is actually typed afterward.
+    const anchor = annotationAnchorPosition(data);
+    setPendingMarker({ timestampSeconds, positionX: anchor.x, positionY: anchor.y, pageNumber });
+    setIsPanelOpen(true);
+    setPanelTab("comments");
   }
 
   async function handleAddComment(body: string, parentCommentId: string | null, marker: PendingMarker | null): Promise<boolean> {
@@ -252,6 +289,13 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
                   if (c) handleSelectComment(c);
                 }}
                 onDeleteAnnotation={(id) => fileActions.deleteAnnotation(asset.id, id)}
+                pendingMarker={pendingMarker}
+                onSubmitPendingComment={async (body) => {
+                  const ok = await handleAddComment(body, null, pendingMarker);
+                  if (ok) setPendingMarker(null);
+                  return ok;
+                }}
+                onCancelPendingComment={() => setPendingMarker(null)}
               />
             ) : asset.assetType === "image" ? (
               <ImageReviewCanvas
@@ -308,16 +352,28 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
           )}
         </div>
 
-        {isPanelOpen && (
-          <>
-            <div className="fixed inset-0 z-10 bg-black/40 sm:bg-transparent lg:hidden" onClick={() => setIsPanelOpen(false)} />
-            <div
-              className={cn(
-                "fixed inset-x-0 bottom-0 z-20 flex h-[70vh] flex-col rounded-t-theme border-t border-border bg-surface shadow-soft-lg",
-                "sm:inset-y-0 sm:right-0 sm:left-auto sm:bottom-auto sm:h-full sm:w-96 sm:rounded-none sm:border-l sm:border-t-0",
-                "lg:static lg:z-auto lg:h-auto lg:w-96 lg:shadow-none"
-              )}
-            >
+        <AnimatePresence>
+          {isPanelOpen && (
+            <>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15 }}
+                className="fixed inset-0 z-10 bg-black/40 sm:bg-transparent lg:hidden"
+                onClick={() => setIsPanelOpen(false)}
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+                transition={{ duration: 0.15, ease: "easeOut" }}
+                className={cn(
+                  "fixed inset-x-0 bottom-0 z-20 flex h-[70vh] flex-col rounded-t-theme border-t border-border bg-surface shadow-soft-lg",
+                  "sm:inset-y-0 sm:right-0 sm:left-auto sm:bottom-auto sm:h-full sm:w-96 sm:rounded-none sm:border-l sm:border-t-0",
+                  "lg:static lg:z-auto lg:h-auto lg:w-96 lg:shadow-none"
+                )}
+              >
               <button
                 onClick={() => setIsPanelOpen(false)}
                 className="absolute right-2 top-2 rounded-theme p-1.5 text-foreground-muted hover:bg-surface-muted lg:hidden"
@@ -355,9 +411,10 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
                 tab={panelTab}
                 onTabChange={setPanelTab}
               />
-            </div>
-          </>
-        )}
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
       </div>
 
       <FileInfoBar
@@ -387,6 +444,13 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
         isSubmitting={fileActions.isSubmitting}
       />
 
+      <ShareFileModal
+        asset={asset}
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        workspaceName={workspace?.name ?? "your organization"}
+        actor={fileActions.currentActor()}
+      />
       <SendForReviewModal asset={asset} isOpen={isSendReviewOpen} onClose={() => setIsSendReviewOpen(false)} />
       <CreateTaskFromAssetModal
         asset={asset}

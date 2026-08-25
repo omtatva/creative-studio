@@ -1,5 +1,5 @@
 import { deleteDoc, doc, getDoc, getDocs, increment, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
-import { filesCol, fileDoc, settingsDoc } from "@/lib/firebase/firestore";
+import { filesCol, fileDoc, fileShareDoc, settingsDoc } from "@/lib/firebase/firestore";
 import {
   projectAssetRef,
   projectAssetThumbRef,
@@ -14,7 +14,7 @@ import { addFileToStage, getOrCreateDefaultStage } from "@/services/stageService
 import { assetTypeFromContentType } from "@/lib/constants/creativeFiles";
 import { DEFAULT_ASSET_STATUS_ID } from "@/lib/constants/assetOptions";
 import { captureVideoThumbnail, readMediaDuration } from "@/lib/utils/videoThumbnail";
-import { AssetStatus, ProjectFile } from "@/types/file.types";
+import { AssetStatus, FileShareSettings, FileShareVisibility, FileSharePermission, ProjectFile } from "@/types/file.types";
 import { TaskActor } from "@/types/task.types";
 
 /**
@@ -110,6 +110,7 @@ export async function uploadProjectFile(
     previousVersionId: newVersionOf?.id ?? null,
     isLatestVersion: true,
     durationSeconds,
+    shareSettings: null,
   };
 
   await setDoc(docRef, { ...record, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
@@ -163,6 +164,70 @@ export async function getFile(workspaceId: string, fileId: string): Promise<Proj
   if (!snapshot.exists()) return null;
   const file = snapshot.data();
   return file.workspaceId === workspaceId ? file : null;
+}
+
+/**
+ * Resolves a shared-link visitor's token to the file it points at — see
+ * FileShareLookup's doc comment in file.types.ts for why this goes
+ * through `file_shares/{shareToken}` (a cheap, always-provable `get()`)
+ * instead of querying `files` directly by `shareSettings.shareToken`,
+ * which Firestore rejects outright (a `list` query's rule can't depend
+ * on `workspaceId`/`projectId` — see canAccessProject inside `files`'
+ * own read rule — unless the query itself filters on those exact
+ * fields, which this one structurally can't: the whole point is not
+ * knowing them yet). The second `getDoc` below evaluates
+ * isSharedFile() against the REAL file document with no such
+ * restriction, since it's a plain single-document read.
+ */
+export async function getFileByShareToken(shareToken: string): Promise<ProjectFile | null> {
+  const lookupSnap = await getDoc(fileShareDoc(shareToken));
+  if (!lookupSnap.exists()) return null;
+  const fileSnap = await getDoc(fileDoc(lookupSnap.data().fileId));
+  return fileSnap.exists() ? fileSnap.data() : null;
+}
+
+/**
+ * Enables/updates/disables link-sharing for one file — the Share dialog's
+ * only write path (see ShareFileModal.tsx). Reuses the existing
+ * `shareToken` across permission/visibility tweaks so a link someone
+ * already copied keeps working; only generates a fresh one the first
+ * time sharing is turned on, or after it was explicitly turned back to
+ * "restricted" and re-enabled (an old copied link must NOT silently
+ * start working again once disabled). Keeps the `file_shares/{shareToken}`
+ * lookup doc (see FileShareLookup) in sync with the file's own
+ * `shareSettings` — deletes the OLD lookup doc when disabling/rotating
+ * so a stale copied link's token no longer resolves to anything.
+ */
+export async function updateFileShareSettings(
+  file: Pick<ProjectFile, "id" | "workspaceId" | "projectId">,
+  current: FileShareSettings | null,
+  patch: { visibility: FileShareVisibility; permission: FileSharePermission },
+  actor: TaskActor
+): Promise<FileShareSettings | null> {
+  const previousToken = current && current.visibility !== "restricted" ? current.shareToken : null;
+
+  if (patch.visibility === "restricted") {
+    await updateDoc(fileDoc(file.id), { shareSettings: null, updatedAt: serverTimestamp() });
+    if (previousToken) await deleteDoc(fileShareDoc(previousToken));
+    return null;
+  }
+
+  const shareToken = previousToken ?? crypto.randomUUID();
+  const shareSettings: FileShareSettings = {
+    visibility: patch.visibility,
+    permission: patch.permission,
+    shareToken,
+    updatedAt: new Date().toISOString(),
+    updatedBy: actor.uid,
+  };
+  await updateDoc(fileDoc(file.id), { shareSettings, updatedAt: serverTimestamp() });
+  await setDoc(fileShareDoc(shareToken), {
+    shareToken,
+    fileId: file.id,
+    workspaceId: file.workspaceId,
+    projectId: file.projectId,
+  });
+  return shareSettings;
 }
 
 export async function setFileReviewStatus(workspaceId: string, fileId: string, status: AssetStatus): Promise<void> {
