@@ -30,6 +30,17 @@ const FOCUSABLE_SELECTOR =
 export function Modal({ isOpen, onClose, title, children, className }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
+  // Every caller passes onClose as an inline arrow function, so it's a
+  // new reference on EVERY render of the parent — including a render
+  // triggered by typing a single character into a controlled input
+  // inside this modal. Depending on `onClose` directly below used to
+  // re-run this whole effect (steal-focus-onto-first-focusable-element
+  // included) on every keystroke, forcing the input to lose focus after
+  // every single character. A ref sidesteps that: handleKeyDown always
+  // calls whatever onClose currently is, with no effect re-run needed
+  // just because the closure identity changed.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -41,7 +52,7 @@ export function Modal({ isOpen, onClose, title, children, className }: ModalProp
 
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== "Tab" || !panel) return;
@@ -65,7 +76,10 @@ export function Modal({ isOpen, onClose, title, children, className }: ModalProp
       document.removeEventListener("keydown", handleKeyDown);
       previouslyFocused.current?.focus();
     };
-  }, [isOpen, onClose]);
+    // Deliberately NOT depending on onClose — see onCloseRef above. This
+    // effect should only ever re-run when the modal actually opens/closes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   if (typeof document === "undefined") return null;
 
