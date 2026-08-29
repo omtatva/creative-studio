@@ -1,6 +1,6 @@
 import { doc, getDoc, getDocs, orderBy, query, serverTimestamp, setDoc, updateDoc, where, writeBatch } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase/config";
-import { workspaceInvitesCol, workspaceInviteDoc, memberDoc } from "@/lib/firebase/firestore";
+import { workspaceInvitesCol, workspaceInviteDoc, memberDoc, userDoc } from "@/lib/firebase/firestore";
 import { logActivity } from "@/services/activityService";
 import { WorkspaceInvite, Member } from "@/types/workspace.types";
 import { MemberRole } from "@/types/workspace.types";
@@ -147,8 +147,14 @@ export async function resendInvite(inviteId: string): Promise<string> {
  * Accepts a pending invite addressed to the caller's own email:
  * creates their `members/{workspaceId}_{uid}` doc (the write Firestore
  * rules only allow because `sourceInviteId` points at a real, pending,
- * matching-email invite — see firestore.rules) and flips the invite to
- * "accepted" in the same batch so both writes succeed or fail together.
+ * matching-email invite — see firestore.rules), flips the invite to
+ * "accepted", and marks the user's own profile onboarded — all in the
+ * same batch so every write succeeds or fails together. Without that
+ * last write, `onboardingComplete` (see AppUser in user.types.ts) was
+ * ONLY ever set true by workspaceService.createWorkspace's owner path —
+ * an invited member joining an EXISTING workspace never triggered it,
+ * so Super Admin > Users would show every invited teammate as
+ * permanently "Pending" no matter how long they'd actually been active.
  */
 export async function acceptInvite(invite: WorkspaceInvite, actor: TaskActor): Promise<void> {
   const batch = writeBatch(db);
@@ -175,6 +181,8 @@ export async function acceptInvite(invite: WorkspaceInvite, actor: TaskActor): P
     acceptedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+
+  batch.set(userDoc(actor.uid), { onboardingComplete: true, updatedAt: serverTimestamp() } as never, { merge: true });
 
   await batch.commit();
 

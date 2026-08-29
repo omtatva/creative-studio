@@ -742,7 +742,13 @@ service cloud.firestore {
     // that's how a brand-new user goes from "holds an invite link" to
     // "is a real member" without ever needing broader access.
     match /workspace_invites/{inviteId} {
+      // isSuperAdmin() added throughout so Super Admin > Users can
+      // invite someone into a customer's workspace for support
+      // purposes (Section "CUSTOMER SUPPORT" in the two-level admin
+      // model) — same non-forgeable check as everywhere else, not a
+      // new capability class.
       allow read: if isWorkspaceMember(resource.data.workspaceId)
+        || isSuperAdmin()
         || (isSignedIn() && resource.data.email == request.auth.token.email);
 
       // role is restricted to non-owner so an inviter can never grant
@@ -750,7 +756,7 @@ service cloud.firestore {
       // re-checked against the caller's OWN membership so an
       // owner/admin of workspace A can never create an invite that
       // claims to belong to workspace B.
-      allow create: if isWorkspaceMemberWithRole(request.resource.data.workspaceId, ['owner', 'admin'])
+      allow create: if (isWorkspaceMemberWithRole(request.resource.data.workspaceId, ['owner', 'admin']) || isSuperAdmin())
         && request.resource.data.role in ['admin', 'member', 'viewer'];
 
       // Either an owner/admin managing the invite (resend/cancel), or
@@ -758,6 +764,7 @@ service cloud.firestore {
       // status pending -> accepted and can never change which
       // workspace/email/role the invite actually grants.
       allow update: if isWorkspaceMemberWithRole(resource.data.workspaceId, ['owner', 'admin'])
+        || isSuperAdmin()
         || (isSignedIn()
           && resource.data.email == request.auth.token.email
           && resource.data.status == 'pending'
@@ -766,7 +773,7 @@ service cloud.firestore {
           && request.resource.data.email == resource.data.email
           && request.resource.data.role == resource.data.role);
 
-      allow delete: if isWorkspaceMemberWithRole(resource.data.workspaceId, ['owner', 'admin']);
+      allow delete: if isWorkspaceMemberWithRole(resource.data.workspaceId, ['owner', 'admin']) || isSuperAdmin();
     }
 
     // Custom-role definitions gate real permissions (see the Access
