@@ -103,7 +103,7 @@ export async function checkWorkspaceLimit(workspace: Workspace, metric: Workspac
     // pre-flight capacity check, not a security boundary, and a
     // member being unable to verify a plan limit must never be the
     // reason a legitimate project creation silently breaks. Owners/
-    // admins/IT Support (who CAN see every project) still get the
+    // admins/Super Admin (who CAN see every project) still get the
     // real, precisely-enforced count.
     console.warn(`[planService] couldn't verify ${metric} usage (failing open):`, err instanceof Error ? err.message : err);
     return { allowed: true, used: 0, limit, reason: null };
@@ -117,4 +117,28 @@ export async function checkWorkspaceLimit(workspace: Workspace, metric: Workspac
     };
   }
   return { allowed: true, used, limit, reason: null };
+}
+
+/**
+ * The named entitlement-service entry points the rest of the app
+ * should call instead of ever writing `if (workspace.plan === "pro")`
+ * inline — thin, obviously-named wrappers over the checks above so
+ * plans can change shape later without hunting down scattered string
+ * comparisons. All three are UX pre-flight checks (fast, no network
+ * round trip beyond what checkWorkspaceLimit already does) — the real,
+ * unbypassable enforcement for members/projects is the Firestore
+ * rules' own get()-based counter comparison (see firestore.rules'
+ * `members`/`projects` create rules), so a client that skips calling
+ * these still can't exceed its plan.
+ */
+export function getWorkspaceEntitlements(workspace: Workspace): WorkspacePlanLimits {
+  return workspace.limits;
+}
+
+export function canCreateProject(workspace: Workspace): Promise<WorkspaceLimitCheck> {
+  return checkWorkspaceLimit(workspace, "projects");
+}
+
+export function canInviteMember(workspace: Workspace): Promise<WorkspaceLimitCheck> {
+  return checkWorkspaceLimit(workspace, "members");
 }

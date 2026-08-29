@@ -7,6 +7,9 @@ import { ID, Timestamps } from "./common.types";
  * lives on the `Member` type instead (see workspace.types.ts),
  * because one user can belong to many workspaces.
  */
+/** The platform's only cross-workspace administration level — see itSupport.ts's doc comment for the full trust chain. Absent/null for every normal customer account. */
+export type PlatformRole = "super_admin";
+
 export interface AppUser extends Timestamps {
   uid: ID;
   email: string;
@@ -14,6 +17,8 @@ export interface AppUser extends Timestamps {
   photoURL: string | null;
   activeWorkspaceId: ID | null;
   onboardingComplete: boolean;
+  /** Admin-write-only (see firestore.rules' users/{uid} block) — never settable by the user themselves, even on their own profile. */
+  platformRole?: PlatformRole | null;
 }
 
 export interface AuthCredentials {

@@ -67,26 +67,40 @@ service cloud.firestore {
         && isPendingInviteMatch(data.sourceInviteId, data);
     }
 
-    // The single designated IT Support account — global read access
-    // across every workspace/project (see the "IT Support" section of
-    // the project-access model). Checked against
-    // request.auth.token.email/email_verified, which come from the
-    // caller's signed Firebase ID token, NOT anything the client sent
-    // in a request body — a workspace admin cannot forge this without
-    // actually controlling itsupport@omtatvadigitals.com's real
-    // Google account. See lib/constants/itSupport.ts for the
-    // client-side mirror of this same check (used only to decide
-    // which query to run — this rule is the real gate).
-    function isItSupport() {
+    // The platform's Super Admin — a PLATFORM-LEVEL role, completely
+    // separate from any workspace's owner/admin (see the two-level
+    // administration model in lib/constants/itSupport.ts). TRUE if
+    // EITHER:
+    //   (a) `platformRole` on the caller's own `users/{uid}` doc is
+    //       "super_admin" — which only firebase-admin can ever write
+    //       (see that same doc's create/update rules below), never a
+    //       value the client supplied directly. This is what makes a
+    //       SECOND Super Admin addable later with zero code changes
+    //       (just set the field in the Firebase Console).
+    //   (b) the caller's own server-verified ID token email/
+    //       email_verified claims match the one designated Super Admin
+    //       account — the exact same non-forgeable check this app has
+    //       always used (a workspace owner cannot fake Firebase's own
+    //       token claims by calling the client SDK any more than they
+    //       could fake `platformRole`). Kept as a standing fallback,
+    //       not a stopgap: rules and application code deploy on
+    //       independent schedules, so isSuperAdmin() must never have a
+    //       hard dependency on the self-healing bootstrap in
+    //       verifySuperAdminAuth (firebaseAdmin.ts) having already run
+    //       for this account.
+    function isSuperAdmin() {
       return isSignedIn()
-        && request.auth.token.email == 'itsupport@omtatvadigitals.com'
-        && request.auth.token.email_verified == true;
+        && (
+          (request.auth.token.email == 'itsupport@omtatvadigitals.com' && request.auth.token.email_verified == true)
+          || (exists(/databases/$(database)/documents/users/$(request.auth.uid))
+              && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('platformRole', null) == 'super_admin')
+        );
     }
 
     // Real, queryable project-level access-control record — see
     // ProjectMembership's doc comment in types/project.types.ts.
     // Workspace membership alone no longer implies project visibility;
-    // this (plus the owner/admin/IT-Support bypasses below) is what
+    // this (plus the owner/admin/Super-Admin bypasses below) is what
     // does.
     function isProjectMember(projectId) {
       return isSignedIn() &&
@@ -109,14 +123,14 @@ service cloud.firestore {
 
     // The read gate for every project-SCOPED resource (the project
     // itself, its tasks/board/files/reviews/stages and their
-    // subcollections): workspace owner/admin, IT Support, or an
+    // subcollections): workspace owner/admin, Super Admin, or an
     // explicit project_members record — ANY role, including viewer.
     // A plain workspace member/viewer with no project_members doc for
     // this project sees NOTHING here — this is the actual fix for
     // "workspace membership must not automatically grant project
     // visibility."
     function canAccessProject(workspaceId, projectId) {
-      return isItSupport()
+      return isSuperAdmin()
         || isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin'])
         || isProjectMember(projectId);
     }
@@ -124,19 +138,19 @@ service cloud.firestore {
     // The write gate for ordinary project WORK (tasks/board/files/
     // stages create/update/delete): same as canAccessProject except a
     // project-level 'viewer' is excluded — read-only per ProjectRole's
-    // doc comment. Workspace owner/admin and IT Support are unaffected
+    // doc comment. Workspace owner/admin and Super Admin are unaffected
     // (they bypass project role entirely, same as canAccessProject).
     function canWriteProject(workspaceId, projectId) {
-      return isItSupport()
+      return isSuperAdmin()
         || isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin'])
         || (isProjectMember(projectId) && projectMemberRole(projectId) != 'viewer');
     }
 
     // The write/manage gate for project-level administration (project
     // settings, and project_members itself): workspace owner/admin,
-    // IT Support, or a project-level owner/manager.
+    // Super Admin, or a project-level owner/manager.
     function canManageProject(workspaceId, projectId) {
-      return isItSupport()
+      return isSuperAdmin()
         || isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin'])
         || isProjectAdmin(projectId);
     }
@@ -180,7 +194,19 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow read, write: if isSelf(uid);
+      // Super Admin can read any profile (Super Admin > Users, and
+      // isSuperAdmin() itself reading its OWN doc). `platformRole` is
+      // otherwise the one field on this doc a client can NEVER set or
+      // change, on create OR update — even the doc's own owner. Only
+      // firebase-admin (verifySuperAdminAuth's self-healing bootstrap)
+      // ever writes it, which is what makes isSuperAdmin() above safe
+      // to trust. `.get('platformRole', null)` on both sides handles
+      // the field being absent entirely (every normal user).
+      allow read: if isSelf(uid) || isSuperAdmin();
+      allow create: if isSelf(uid) && request.resource.data.get('platformRole', null) == null;
+      allow update: if isSelf(uid)
+        && request.resource.data.get('platformRole', null) == resource.data.get('platformRole', null);
+      allow delete: if isSelf(uid);
     }
 
     // Minimal-data slug registry — see WorkspaceSlug's doc comment in
@@ -204,7 +230,7 @@ service cloud.firestore {
     // ID-keyed routing doc (never the file content itself) the public
     // /share/[shareToken] page resolves BEFORE it knows which workspace/
     // project/file a token even belongs to. `isSignedIn()` (not
-    // `isItSupport()`/membership — this collection has no such concept)
+    // `isSuperAdmin()`/membership — this collection has no such concept)
     // is the read gate: the share page signs the visitor in anonymously
     // first (see lib/firebase/auth's signInGuest) even for "anyone"-mode
     // links with no visible sign-in form, so this still requires SOME
@@ -220,18 +246,18 @@ service cloud.firestore {
     }
 
     match /workspaces/{workspaceId} {
-      allow read: if isWorkspaceMember(workspaceId) || isItSupport();
+      allow read: if isWorkspaceMember(workspaceId) || isSuperAdmin();
       allow create: if isSignedIn();
       // Profile fields (name, logo, timezone, ...) are editable by
       // owner OR admin, matching every other "manage this workspace"
       // action in this app (settings, members, roles). Deleting the
-      // whole workspace is owner OR IT Support — see Settings > All
-      // Workspaces (IT-Support-only), where an admin can act on a
+      // whole workspace is owner OR Super Admin — see Settings > All
+      // Workspaces (Super-Admin-only), where an admin can act on a
       // workspace they don't personally belong to. Still real deletion
       // (see deleteWorkspaceAccess in workspaceService.ts), not
       // frontend-hidden — this is the actual enforcement.
       allow update: if isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin']);
-      allow delete: if isWorkspaceOwner(workspaceId) || isItSupport();
+      allow delete: if isWorkspaceOwner(workspaceId) || isSuperAdmin();
 
       match /activity_logs/{logId} {
         allow read: if isWorkspaceMember(workspaceId);
@@ -242,6 +268,60 @@ service cloud.firestore {
       match /notifications/{uid}/items/{itemId} {
         allow read, write: if isSelf(uid);
       }
+
+      // See WorkspaceSubscription's doc comment in billing.types.ts —
+      // the source of truth for what this workspace is entitled to.
+      // Write is UNCONDITIONALLY denied to every client, including the
+      // workspace's own owner — "never trust plan=business sent from
+      // the browser" (Section 9/23 of the subscription-system spec).
+      // Only firebase-admin (billingAdmin.ts, called from
+      // /api/billing/checkout, /change-plan, /webhook,
+      // /activate-plan, /activate-enterprise — every one of which
+      // independently re-verifies who's asking before writing) may
+      // ever touch this doc; it bypasses rules entirely, so this
+      // `false` never blocks those routes, only direct client access.
+      match /billing/subscription {
+        allow read: if isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin']) || isSuperAdmin();
+        allow write: if false;
+      }
+    }
+
+    // Super Admin > Billing's cross-workspace listing (see
+    // allWorkspaceSubscriptionsQuery's doc comment in
+    // lib/firebase/firestore.ts) — a `collectionGroup('billing')` query
+    // is a SEPARATE thing from the nested `workspaces/{workspaceId}/
+    // billing/subscription` match above as far as rules evaluation is
+    // concerned: that nested rule only ever applies to a get/query
+    // scoped to one specific workspace, never to a collection-group
+    // query spanning all of them. This `{path=**}` wildcard match is
+    // what actually authorizes the collection-group read itself.
+    match /{path=**}/billing/{docId} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
+    }
+
+    // See SalesLead's doc comment in billing.types.ts. `create` is
+    // denied to every client (including a signed-in one) — the public
+    // Contact Sales form has no account to be authorized by, so lead
+    // creation goes ONLY through POST /api/sales-leads (firebase-admin,
+    // bypasses this rule entirely, does its own field validation).
+    // Reading and updating status (Settings > Sales Leads) IS a direct
+    // client operation, gated by isSuperAdmin() — the same single
+    // designated account every other cross-workspace admin view in
+    // this app already trusts, not a new admin/auth concept.
+    match /sales_leads/{leadId} {
+      allow read, update: if isSuperAdmin();
+      allow create, delete: if false;
+    }
+
+    // Platform-wide Super Admin action trail (Super Admin > Audit
+    // Logs) — see PlatformAuditLogEntry's doc comment in
+    // platformAudit.types.ts. Admin-SDK-write-only (every entry is
+    // written by logPlatformAudit from a route already gated by
+    // verifySuperAdminAuth); Super Admin can read, nobody else can.
+    match /platform_audit_logs/{logId} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
     }
 
     match /members/{memberId} {
@@ -288,24 +368,24 @@ service cloud.firestore {
         || (isWorkspaceMemberWithRole(resource.data.workspaceId, ['admin'])
           && resource.data.role != 'owner'
           && request.resource.data.role != 'owner');
-      // isItSupport() added alongside the existing owner/admin paths so
+      // isSuperAdmin() added alongside the existing owner/admin paths so
       // deleteWorkspaceAccess (see workspaceService.ts) can also remove
       // every member doc — including the workspace's own owner's —
-      // when IT Support deletes a workspace it doesn't personally
+      // when Super Admin deletes a workspace it doesn't personally
       // belong to from Settings > All Workspaces.
       allow delete: if isWorkspaceOwner(resource.data.workspaceId)
         || (isWorkspaceMemberWithRole(resource.data.workspaceId, ['admin']) && resource.data.role != 'owner')
-        || isItSupport();
+        || isSuperAdmin();
     }
 
     match /settings/{workspaceId} {
       // Branding (logo/favicon/backgrounds/colors) lives on this same
-      // doc (settings.branding) — isItSupport() added to both read
-      // and update so the designated IT Support account can view and
+      // doc (settings.branding) — isSuperAdmin() added to both read
+      // and update so the designated Super Admin account can view and
       // manage any workspace's branding, not just workspaces it's
       // actually a member of, per the project-access model's global
-      // IT Support grant (see the isItSupport() function above).
-      allow read: if isWorkspaceMember(workspaceId) || isItSupport();
+      // Super Admin grant (see the isSuperAdmin() function above).
+      allow read: if isWorkspaceMember(workspaceId) || isSuperAdmin();
       // CREATE happens inside workspaceService.createWorkspace()'s
       // transaction, in the same transaction that creates the
       // workspaces/{workspaceId} doc itself — a rule that does
@@ -321,11 +401,11 @@ service cloud.firestore {
       // manage all of those (canManageWorkspace) — requiring literal
       // ownership here silently blocked every admin's save with a
       // permission-denied error the UI could only surface as a toast.
-      // DELETE is owner or IT Support — deleteWorkspaceAccess removes
+      // DELETE is owner or Super Admin — deleteWorkspaceAccess removes
       // this doc as part of a full workspace deletion (see above).
       allow create: if isSignedIn() && request.resource.data.workspaceId == workspaceId;
-      allow update: if isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin']) || isItSupport();
-      allow delete: if isWorkspaceOwner(workspaceId) || isItSupport();
+      allow update: if isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin']) || isSuperAdmin();
+      allow delete: if isWorkspaceOwner(workspaceId) || isSuperAdmin();
     }
 
     // Projects are a top-level collection carrying a `workspaceId`
@@ -342,7 +422,7 @@ service cloud.firestore {
     // record via projectService.createProject, never every workspace
     // member automatically). UPDATE/DELETE are tightened from "any
     // workspace member" to canManageProject (project-level or
-    // workspace-level owner/admin, or IT Support).
+    // workspace-level owner/admin, or Super Admin).
     match /projects/{projectId} {
       allow read: if canAccessProject(resource.data.workspaceId, projectId);
       // Restricted to owner/admin/member — a viewer can see projects
@@ -384,7 +464,7 @@ service cloud.firestore {
       // on a project_members doc that doesn't exist yet — e.g. an
       // employee who hasn't been added to this project — must resolve
       // to "no access", not a rules-evaluation error). The doc-id
-      // clause and isItSupport() are evaluated first because neither
+      // clause and isSuperAdmin() are evaluated first because neither
       // touches `resource`; every clause that reads `resource.data` is
       // explicitly guarded with `resource != null &&` so `||`'s
       // short-circuit never lets a null-dereference throw.
@@ -409,14 +489,14 @@ service cloud.firestore {
 
       allow read: if isSignedIn() && (
         membershipId.split('_')[1] == request.auth.uid
-        || isItSupport()
+        || isSuperAdmin()
         || (resource != null && resource.data.uid == request.auth.uid)
         || (resource != null && isWorkspaceMemberWithRole(resource.data.workspaceId, ['owner', 'admin']))
         || canManageProject(targetProjectWorkspaceId(), membershipId.split('_')[0])
       );
 
       // Only someone who can already MANAGE the target project
-      // (workspace owner/admin, IT Support, or that project's own
+      // (workspace owner/admin, Super Admin, or that project's own
       // owner/admin) may add a member — never the invitee themselves
       // (closes Scenario C: a user granting themselves access to a
       // project they're not authorized on). The target uid must
@@ -459,7 +539,7 @@ service cloud.firestore {
     // Tasks"/Calendar views (no explicit projectId) now pre-filter
     // their OWN query to the caller's accessible project ids first
     // (see useAccessibleProjectIds.ts) for anyone who isn't a
-    // workspace owner/admin/IT Support — so every task a query like
+    // workspace owner/admin/Super Admin — so every task a query like
     // that could possibly return already belongs to a project this
     // rule will allow, and Firestore's "reject the whole query if any
     // matched doc fails the rule" behavior never trips. Comments/
@@ -544,7 +624,7 @@ service cloud.firestore {
     // source of truth" requirement. Project-membership-gated, same as
     // `tasks` above — useFiles.ts's workspace-wide view pre-filters by
     // accessible project ids for anyone who isn't workspace owner/
-    // admin/IT Support (see useAccessibleProjectIds.ts). Comments are
+    // admin/Super Admin (see useAccessibleProjectIds.ts). Comments are
     // a subcollection scoped to their parent file's workspace
     // (isParentFileMember), mirroring tasks/{taskId}/comments above;
     // only the comment's own author may edit/delete it (or resolve it
@@ -621,7 +701,7 @@ service cloud.firestore {
     // calling the SDK directly, bypassing the UI check. Project-
     // membership-gated, same as `tasks`/`files` above — useReviews.ts's
     // workspace-wide view pre-filters by accessible project ids for
-    // anyone who isn't workspace owner/admin/IT Support.
+    // anyone who isn't workspace owner/admin/Super Admin.
     match /reviews/{reviewId} {
       allow read: if canAccessProject(resource.data.workspaceId, resource.data.projectId);
       allow create: if canWriteProject(request.resource.data.workspaceId, request.resource.data.projectId);

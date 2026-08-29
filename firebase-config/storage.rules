@@ -9,9 +9,9 @@ rules_version = '2';
 // `branding/**` is the one sub-path tightened here to real per-
 // workspace access, matching the Settings > Branding logo feature:
 // only members of THAT workspace may read a workspace's branding
-// assets, and only that workspace's owner/admin (or the designated
-// IT Support account — see firestore.rules' isItSupport(), same
-// email-claim check) may write them. Everything else keeps its
+// assets, and only that workspace's owner/admin (or the platform
+// Super Admin — see firestore.rules' isSuperAdmin(), same
+// platformRole-field check) may write them. Everything else keeps its
 // existing behavior unchanged — this is deliberately a single match
 // block with the resource-type segment captured as a variable
 // (`resourceType`) and branched on inline, NOT two overlapping
@@ -27,12 +27,16 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    // Same check as firestore.rules' isItSupport() — verified Firebase
-    // ID token claims, not anything the client supplied.
-    function isItSupport() {
+    // Same check as firestore.rules' isSuperAdmin() — see that
+    // function's doc comment for why this is an OR of the token-claim
+    // check and the `platformRole` field, not just the field alone.
+    function isSuperAdmin() {
       return isSignedIn()
-        && request.auth.token.email == 'itsupport@omtatvadigitals.com'
-        && request.auth.token.email_verified == true;
+        && (
+          (request.auth.token.email == 'itsupport@omtatvadigitals.com' && request.auth.token.email_verified == true)
+          || (firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
+              && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.get('platformRole', null) == 'super_admin')
+        );
     }
 
     function isWorkspaceMember(workspaceId) {
@@ -50,10 +54,10 @@ service firebase.storage {
 
     match /workspaces/{workspaceId}/{resourceType}/{allPaths=**} {
       allow read: if resourceType == 'branding'
-        ? (isWorkspaceMember(workspaceId) || isItSupport())
+        ? (isWorkspaceMember(workspaceId) || isSuperAdmin())
         : isSignedIn();
       allow write: if resourceType == 'branding'
-        ? (isWorkspaceAdmin(workspaceId) || isItSupport())
+        ? (isWorkspaceAdmin(workspaceId) || isSuperAdmin())
         : isSignedIn();
     }
   }

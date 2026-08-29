@@ -44,14 +44,19 @@ export interface Workspace extends Timestamps {
   plan: WorkspacePlan;
   limits: WorkspacePlanLimits;
   /**
-   * "active" = plan/limits above are in effect. "pending_payment" =
-   * the workspace was created against a paid plan but no payment has
-   * been confirmed yet — plan/limits stay on the free tier until a
-   * future Stripe webhook (not implemented yet) flips this to
-   * "active" and copies pendingPlan into plan/limits. See
-   * createWorkspace() in workspaceService.ts.
+   * A fast-path CACHE of workspaces/{id}/billing/subscription's own
+   * `status` (see WorkspaceSubscription in billing.types.ts, the real
+   * source of truth) — kept in sync by subscriptionService.ts's
+   * syncWorkspaceCache so every EXISTING call site that already reads
+   * `workspace.subscriptionStatus`/`workspace.plan`/`workspace.limits`
+   * (checkWorkspaceLimit, canUseFeature, ...) keeps working unchanged;
+   * none of them need to learn about the subscription doc at all.
+   * "pending_payment" is this cache's own extra state (not a real
+   * SubscriptionStatus value) for "requested a paid plan, no
+   * subscription doc confirming it yet" — plan/limits stay on the free
+   * tier the whole time. See createWorkspace() in workspaceService.ts.
    */
-  subscriptionStatus: "active" | "pending_payment";
+  subscriptionStatus: "trialing" | "active" | "past_due" | "canceled" | "incomplete" | "paused" | "pending_payment";
   /** The plan the user picked but hasn't paid for yet; null once active. */
   pendingPlan: WorkspacePlan | null;
   timezone: string;

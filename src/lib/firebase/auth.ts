@@ -50,8 +50,8 @@ export function getCurrentUser(): User | null {
  * Exists specifically for accounts (like itsupport@omtatvadigitals.com —
  * see lib/constants/itSupport.ts) created directly in the Firebase
  * Console rather than through the normal signup flow: the console never
- * sends a verification email, and both isItSupportUser() here and
- * isItSupport() in firestore.rules require `emailVerified === true`
+ * sends a verification email, and verifySuperAdminAuth's self-heal
+ * (firebaseAdmin.ts) requires `emailVerified === true`
  * before granting cross-workspace access — with no verification email
  * ever sent, that requirement could never be satisfied. Clicking the
  * link in the resulting email is what actually flips emailVerified;

@@ -28,7 +28,7 @@ function ProjectDetailsShell({ projectId, children }: { projectId: string; child
 
   // Project exists and belongs to this workspace, but the signed-in
   // user has no project_members record for it (and isn't a workspace
-  // owner/admin or IT Support) — deliberately worded the same as the
+  // owner/admin or Super Admin) — deliberately worded the same as the
   // "doesn't exist" case above so this can't be used to distinguish
   // "you're not allowed" from "it's not there" by probing project ids.
   if (!hasAccess) {

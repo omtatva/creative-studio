@@ -1,4 +1,4 @@
-import { setDoc, getDoc, serverTimestamp } from "firebase/firestore";
+import { setDoc, getDoc, getDocs, serverTimestamp } from "firebase/firestore";
 import type { User } from "firebase/auth";
 import {
   signInWithEmail,
@@ -6,7 +6,7 @@ import {
   signOutUser,
   resetPassword,
 } from "@/lib/firebase/auth";
-import { userDoc } from "@/lib/firebase/firestore";
+import { userDoc, usersCol } from "@/lib/firebase/firestore";
 import { AppUser, AuthCredentials, SignupPayload } from "@/types/user.types";
 
 /**
@@ -54,4 +54,34 @@ async function createUserProfile(user: User): Promise<void> {
 export async function getUserProfile(uid: string): Promise<AppUser | null> {
   const snapshot = await getDoc(userDoc(uid));
   return snapshot.exists() ? (snapshot.data() as AppUser) : null;
+}
+
+/** Super Admin > Users — every account on the platform. Firestore rules gate `users/{uid}` reads to `isSelf(uid) || isSuperAdmin()`, so this unfiltered query naturally returns only the caller's own doc for anyone else. */
+export async function getAllUsers(): Promise<AppUser[]> {
+  const snapshot = await getDocs(usersCol());
+  return snapshot.docs.map((d) => d.data());
+}
+
+/**
+ * Self-heals `platformRole` onto this account's own profile doc — see
+ * /api/auth/sync-platform-role and firebaseAdmin.ts's syncPlatformRole
+ * for the full trust chain. Called once after every sign-in
+ * (AuthContext.loadProfile); best-effort and silent on failure since a
+ * normal user's login must never depend on this succeeding — it only
+ * ever matters for the one designated Super Admin account.
+ */
+export async function syncPlatformRole(user: User): Promise<AppUser["platformRole"] | null> {
+  try {
+    const idToken = await user.getIdToken();
+    const response = await fetch("/api/auth/sync-platform-role", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    if (!response.ok) return null;
+    const data = (await response.json()) as { platformRole?: AppUser["platformRole"] | null };
+    return data.platformRole ?? null;
+  } catch (err) {
+    console.error("[authService] syncPlatformRole failed:", err);
+    return null;
+  }
 }

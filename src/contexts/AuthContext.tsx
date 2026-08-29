@@ -10,7 +10,7 @@ import {
 } from "react";
 import type { User } from "firebase/auth";
 import { subscribeToAuthChanges, getCurrentUser } from "@/lib/firebase/auth";
-import { getUserProfile } from "@/services/authService";
+import { getUserProfile, syncPlatformRole } from "@/services/authService";
 import { AppUser } from "@/types/user.types";
 
 /**
@@ -52,6 +52,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const userProfile = await getUserProfile(uid);
       console.log("[AuthContext.loadProfile] read users/" + uid + " OK", { found: userProfile !== null });
       setProfile(userProfile);
+
+      // Self-heal platformRole (see authService.syncPlatformRole) once
+      // per session, only when it isn't already synced — solves the
+      // bootstrap chicken-and-egg where client-side Super Admin gating
+      // reads `profile.platformRole`, which has to exist BEFORE the
+      // Super Admin can reach any gated page in the first place.
+      // Best-effort and silent for every other account.
+      if (userProfile && userProfile.platformRole !== "super_admin") {
+        const currentUser = getCurrentUser();
+        if (currentUser) {
+          const syncedRole = await syncPlatformRole(currentUser);
+          if (syncedRole === "super_admin") {
+            setProfile(await getUserProfile(uid));
+          }
+        }
+      }
     } catch (err) {
       const firebaseErr = err as { code?: string; message?: string; stack?: string };
       console.error("[AuthContext.loadProfile] FAILED reading users/" + uid, err);

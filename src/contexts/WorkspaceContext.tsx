@@ -6,7 +6,7 @@ import { useAuthContext } from "./AuthContext";
 import { getWorkspace, setActiveWorkspace } from "@/services/workspaceService";
 import { getUserWorkspaceMemberships } from "@/services/userService";
 import { workspacesCol } from "@/lib/firebase/firestore";
-import { isItSupportUser } from "@/lib/constants/itSupport";
+import { isSuperAdminUser } from "@/lib/constants/itSupport";
 import { Workspace } from "@/types/workspace.types";
 
 /**
@@ -54,6 +54,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setWorkspace(ws);
       setError(null);
       if (!ws) {
+        if (isSuperAdminUser(profile)) {
+          // Super Admin (itSupport.ts) is a platform-wide admin identity,
+          // not a tenant member — it's expected and permanent for this
+          // account to have no valid activeWorkspaceId (never created
+          // one, or deleted one while testing the delete flow). Not a
+          // bug: no console.error (Next's dev overlay treats that as a
+          // crash) and no user-facing error — MainLayout already skips
+          // the workspace-required block for this account, and every
+          // page it actually uses (Super Admin > Customers/Sales/etc.)
+          // reads the `workspaces` list, never this `workspace`.
+          return;
+        }
         // The doc doesn't exist (deleted, or activeWorkspaceId is stale) —
         // this is a real, actionable state, not a transient loading gap.
         console.error("[WorkspaceContext] workspace document not found:", workspaceId);
@@ -80,13 +92,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   async function loadMemberships(uid: string) {
     try {
-      // IT Support (see lib/constants/itSupport.ts) gets every
+      // Super Admin (see lib/constants/itSupport.ts) gets every
       // workspace, not just ones they hold a `members` doc for —
-      // matches firestore.rules' isItSupport() bypass on the
+      // matches firestore.rules' isSuperAdmin() bypass on the
       // `workspaces` collection's read rule. Everyone else keeps the
       // exact existing behavior: only workspaces they actually belong
       // to.
-      if (isItSupportUser(firebaseUser)) {
+      if (isSuperAdminUser(profile)) {
         const snapshot = await getDocs(workspacesCol());
         setWorkspaces(snapshot.docs.map((d) => d.data()));
         return;

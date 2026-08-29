@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -15,6 +16,7 @@ import {
 } from "@/lib/constants/planLimits";
 import type { WorkspacePlan } from "@/types/workspace.types";
 import { SectionWrapper } from "../SectionWrapper";
+import { ContactSalesModal } from "./ContactSalesModal";
 
 /**
  * Every number and feature shown here comes straight from
@@ -47,10 +49,11 @@ function ctaLabel(plan: WorkspacePlan): string {
 
 export function PricingSection() {
   const router = useRouter();
+  const [isContactSalesOpen, setIsContactSalesOpen] = useState(false);
 
   function handleCta(plan: WorkspacePlan) {
     if (plan === "enterprise") {
-      window.location.href = "mailto:hello@omtatvadigitals.com?subject=Enterprise%20plan%20inquiry";
+      setIsContactSalesOpen(true);
       return;
     }
     router.push(`/signup?plan=${plan}`);
@@ -58,6 +61,7 @@ export function PricingSection() {
 
   return (
     <SectionWrapper id="pricing" className="max-w-6xl">
+      <div id="contact-sales" />
       <div className="mx-auto max-w-2xl text-center">
         <p className="text-xs font-semibold uppercase tracking-[0.3em] text-primary">Pricing</p>
         <h2 className="mt-3 text-3xl font-semibold text-foreground sm:text-4xl">Simple plans that grow with your team.</h2>
@@ -139,6 +143,8 @@ export function PricingSection() {
       <p className="mt-8 text-center text-xs text-foreground-muted">
         Paid plans activate once payment is confirmed — your workspace stays on the Free plan&apos;s limits until then.
       </p>
+
+      <ContactSalesModal isOpen={isContactSalesOpen} onClose={() => setIsContactSalesOpen(false)} />
     </SectionWrapper>
   );
 }

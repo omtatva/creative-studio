@@ -14,7 +14,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/shared/ErrorState";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/useToast";
-import { isItSupportUser } from "@/lib/constants/itSupport";
+import { isSuperAdminUser } from "@/lib/constants/itSupport";
 import { getWorkspace, deleteWorkspaceAccess } from "@/services/workspaceService";
 import { getWorkspaceMembers } from "@/services/userService";
 import { getWorkspaceProjects } from "@/services/projectService";
@@ -25,22 +25,22 @@ import { Workspace, Member } from "@/types/workspace.types";
 import { Project } from "@/types/project.types";
 
 /**
- * One workspace's detail view, reached by clicking a row on Settings >
- * All Workspaces — IT-Support-only, same gate as the list page. Shows
- * the project summary an IT Support agent would actually need to
- * understand what's inside before acting on it, plus the same
+ * One workspace's detail view, reached by clicking a row on Super
+ * Admin > Customers/Workspaces — Super-Admin-only, same gate as the
+ * list page. Shows the project summary a Super Admin would actually
+ * need to understand what's inside before acting on it, plus the same
  * type-to-confirm delete flow the workspace's own owner gets on
  * Settings > Workspace (see deleteWorkspaceAccess in
  * workspaceService.ts — an access cutoff, not a full data wipe, same
- * as there), now also reachable for a workspace IT Support doesn't
- * personally belong to.
+ * as there), now also reachable for a workspace the Super Admin
+ * doesn't personally belong to.
  */
-export default function WorkspaceDetailSettingsPage({ params }: { params: Promise<{ workspaceId: string }> }) {
+export default function SuperAdminCustomerDetailPage({ params }: { params: Promise<{ workspaceId: string }> }) {
   const { workspaceId } = use(params);
   const router = useRouter();
-  const { firebaseUser } = useAuthContext();
+  const { profile } = useAuthContext();
   const toast = useToast();
-  const isItSupport = isItSupportUser(firebaseUser);
+  const isSuperAdmin = isSuperAdminUser(profile);
 
   const [workspace, setWorkspace] = useState<Workspace | null | undefined>(undefined);
   const [members, setMembers] = useState<Member[]>([]);
@@ -52,7 +52,7 @@ export default function WorkspaceDetailSettingsPage({ params }: { params: Promis
   const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
-    if (!isItSupport) return;
+    if (!isSuperAdmin) return;
     let cancelled = false;
     setIsLoadingDetail(true);
     Promise.all([getWorkspace(workspaceId), getWorkspaceMembers(workspaceId), getWorkspaceProjects(workspaceId)])
@@ -63,14 +63,14 @@ export default function WorkspaceDetailSettingsPage({ params }: { params: Promis
         setProjects(p);
       })
       .catch((err) => {
-        console.error("[all-workspaces detail] failed to load:", err);
+        console.error("[super-admin customer detail] failed to load:", err);
         if (!cancelled) setWorkspace(null);
       })
       .finally(() => !cancelled && setIsLoadingDetail(false));
     return () => {
       cancelled = true;
     };
-  }, [isItSupport, workspaceId]);
+  }, [isSuperAdmin, workspaceId]);
 
   async function handleDelete() {
     if (!workspace) return;
@@ -78,7 +78,7 @@ export default function WorkspaceDetailSettingsPage({ params }: { params: Promis
     try {
       await deleteWorkspaceAccess(workspace.id);
       toast.success(`"${workspace.name}" deleted`);
-      router.push(ROUTES.settingsAllWorkspaces);
+      router.push(ROUTES.superAdminCustomers);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't delete this workspace");
       setIsDeleting(false);
@@ -87,11 +87,11 @@ export default function WorkspaceDetailSettingsPage({ params }: { params: Promis
     }
   }
 
-  if (!isItSupport) {
+  if (!isSuperAdmin) {
     return (
       <div className="flex flex-col gap-2">
         <h1 className="text-xl font-semibold text-foreground">Workspace</h1>
-        <p className="text-sm text-foreground-muted">Only the IT Support account can view this page.</p>
+        <p className="text-sm text-foreground-muted">Only the platform Super Admin can view this page.</p>
       </div>
     );
   }
@@ -103,7 +103,7 @@ export default function WorkspaceDetailSettingsPage({ params }: { params: Promis
       <ErrorState
         title="Workspace not found"
         message="It may have already been deleted."
-        onRetry={() => router.push(ROUTES.settingsAllWorkspaces)}
+        onRetry={() => router.push(ROUTES.superAdminCustomers)}
       />
     );
   }
@@ -115,9 +115,9 @@ export default function WorkspaceDetailSettingsPage({ params }: { params: Promis
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href={ROUTES.settingsAllWorkspaces} className="mb-2 inline-flex items-center gap-1.5 text-xs font-medium text-foreground-muted hover:text-foreground">
+        <Link href={ROUTES.superAdminCustomers} className="mb-2 inline-flex items-center gap-1.5 text-xs font-medium text-foreground-muted hover:text-foreground">
           <ArrowLeft className="h-3.5 w-3.5" />
-          All Workspaces
+          Customers / Workspaces
         </Link>
         <div className="flex items-center gap-2">
           <h1 className="text-xl font-semibold text-foreground">{workspace.name}</h1>

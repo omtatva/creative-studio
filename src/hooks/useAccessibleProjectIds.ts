@@ -6,7 +6,7 @@ import { projectMembersCol } from "@/lib/firebase/firestore";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
-import { isItSupportUser } from "@/lib/constants/itSupport";
+import { isSuperAdminUser } from "@/lib/constants/itSupport";
 
 export interface AccessibleProjectIds {
   /**
@@ -31,18 +31,18 @@ export interface AccessibleProjectIds {
  * search must not surface data from a project the user was never
  * added to, per the project-access model's requirement #14/#15).
  *
- * Workspace owner/admin and IT Support keep seeing everything
+ * Workspace owner/admin and Super Admin keep seeing everything
  * (`projectIds: null`) — same bypass as useProjects.ts.
  */
 export function useAccessibleProjectIds(): AccessibleProjectIds {
   const { workspaceId } = useWorkspaceContext();
-  const { firebaseUser } = useAuthContext();
+  const { firebaseUser, profile } = useAuthContext();
   const { canManageWorkspace, isLoading: isLoadingRole } = useCurrentMemberRole();
   const [projectIds, setProjectIds] = useState<string[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const uid = firebaseUser?.uid ?? "";
-  const hasWorkspaceWideAccess = canManageWorkspace || isItSupportUser(firebaseUser);
+  const hasWorkspaceWideAccess = canManageWorkspace || isSuperAdminUser(profile);
 
   useEffect(() => {
     if (!workspaceId || !uid || isLoadingRole) {

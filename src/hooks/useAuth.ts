@@ -52,7 +52,7 @@ export function useAuth() {
     setIsSubmitting(true);
     try {
       await logout();
-      router.push(ROUTES.login);
+      router.push(ROUTES.home);
     } finally {
       setIsSubmitting(false);
     }

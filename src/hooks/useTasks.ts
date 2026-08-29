@@ -81,7 +81,7 @@ export function useTasks(projectId?: string) {
     // resolution first.
     if (isLoadingAccess) return;
 
-    // null = workspace owner/admin/IT Support — unfiltered, same query as before.
+    // null = workspace owner/admin/Super Admin — unfiltered, same query as before.
     if (accessibleProjectIds === null) {
       setIsLoading(true);
       const q = query(tasksCol(), where("workspaceId", "==", workspaceId), orderBy("updatedAt", "desc"));

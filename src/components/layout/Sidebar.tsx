@@ -18,6 +18,7 @@ import {
   Bell,
   Sparkles as AIIcon,
   Settings,
+  ShieldCheck,
   ChevronsLeft,
   ChevronsRight,
   X,
@@ -28,7 +29,9 @@ import { ROUTES } from "@/lib/constants/routes";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useWorkspaceSettings } from "@/hooks/useWorkspaceSettings";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
+import { useAuthContext } from "@/contexts/AuthContext";
 import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
+import { isSuperAdminUser } from "@/lib/constants/itSupport";
 import { Avatar } from "@/components/ui/Avatar";
 import { DEFAULT_SIDEBAR_CONFIG, DEFAULT_FIELD_SECURITY_SETTINGS } from "@/lib/constants/settingsDefaults";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
@@ -66,7 +69,9 @@ export function Sidebar() {
   const { unreadCount } = useNotifications();
   const { settings } = useWorkspaceSettings();
   const { workspace } = useWorkspaceContext();
+  const { profile } = useAuthContext();
   const { canManageWorkspace, isLoading: isLoadingRole } = useCurrentMemberRole();
+  const isSuperAdmin = isSuperAdminUser(profile);
   const isCollapsed = useUIStore((s) => s.isSidebarCollapsed);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const isMobileNavOpen = useUIStore((s) => s.isMobileNavOpen);
@@ -201,6 +206,24 @@ export function Sidebar() {
           );
         })}
       </nav>
+
+      {isSuperAdmin && (
+        <div className="border-t border-border px-2 py-2">
+          <Link
+            href={ROUTES.superAdmin}
+            className={cn(
+              "flex items-center gap-3 rounded-theme px-3 py-2 text-sm font-medium transition-colors",
+              pathname === ROUTES.superAdmin || pathname.startsWith(`${ROUTES.superAdmin}/`)
+                ? "bg-primary/10 text-primary"
+                : "text-foreground-muted hover:bg-surface-muted hover:text-foreground",
+              isCollapsed && "justify-center px-0"
+            )}
+          >
+            <ShieldCheck className="h-4.5 w-4.5 shrink-0" />
+            {!isCollapsed && "Super Admin"}
+          </Link>
+        </div>
+      )}
 
       <button
         onClick={toggleSidebar}

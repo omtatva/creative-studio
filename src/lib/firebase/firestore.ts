@@ -1,12 +1,16 @@
 import {
   collection,
+  collectionGroup,
   doc,
   type CollectionReference,
   type DocumentReference,
+  type Query,
 } from "firebase/firestore";
 import { db } from "./config";
 import { AppUser } from "@/types/user.types";
 import { Workspace, Member, WorkspaceInvite, CustomRole, WorkspaceSlug } from "@/types/workspace.types";
+import { WorkspaceSubscription, SalesLead } from "@/types/billing.types";
+import { PlatformAuditLogEntry } from "@/types/platformAudit.types";
 import { WorkspaceSettings } from "@/types/settings.types";
 import { Project, ProjectMembership } from "@/types/project.types";
 import { Task, TaskComment, TaskAttachment, TaskActivityEntry } from "@/types/task.types";
@@ -42,6 +46,33 @@ export const userDoc = (uid: string) => doc(db, "users", uid) as DocumentReferen
 export const workspacesCol = () => collection(db, "workspaces") as CollectionReference<Workspace>;
 export const workspaceDoc = (workspaceId: string) =>
   doc(db, "workspaces", workspaceId) as DocumentReference<Workspace>;
+
+/** See WorkspaceSubscription's doc comment in billing.types.ts — a singleton doc, always at this exact path, never a queried collection. Admin-SDK-write-only (firestore.rules); read is owner/admin/Super Admin. */
+export const workspaceSubscriptionDoc = (workspaceId: string) =>
+  doc(db, "workspaces", workspaceId, "billing", "subscription") as DocumentReference<WorkspaceSubscription>;
+
+/**
+ * Super Admin > Billing's cross-workspace view: every workspace's
+ * `billing/subscription` doc at once via a collection-GROUP query
+ * (every workspace's subcollection is named `billing`, and the only
+ * doc ever written there is `subscription` — see workspaceSubscriptionDoc
+ * above). Safe against the usual "query needs a matching `where` on
+ * every `resource.data` field the rule touches" restriction: the
+ * rule's `workspaceId` comes from the PATH segment binding
+ * (`workspaces/{workspaceId}/billing/subscription`), not
+ * `resource.data`, so it's already known per-candidate-document during
+ * query evaluation — no `where` clause needed. Only Super Admin's own
+ * `isSuperAdmin()` check (a `get()` on their own separate `users/{uid}`
+ * doc) actually gates this read.
+ */
+export const allWorkspaceSubscriptionsQuery = () => collectionGroup(db, "billing") as Query<WorkspaceSubscription>;
+
+/** See SalesLead's doc comment in billing.types.ts. Firestore rules deny ALL direct client access — every read/write here goes through a Super-Admin-only client read (list/detail pages) or an admin-SDK API route (public submission, enterprise activation). */
+export const salesLeadsCol = () => collection(db, "sales_leads") as CollectionReference<SalesLead>;
+export const salesLeadDoc = (leadId: string) => doc(db, "sales_leads", leadId) as DocumentReference<SalesLead>;
+
+/** See PlatformAuditLogEntry's doc comment in platformAudit.types.ts. Admin-SDK-write-only; read is Super-Admin-only. */
+export const platformAuditLogsCol = () => collection(db, "platform_audit_logs") as CollectionReference<PlatformAuditLogEntry>;
 
 /** Document ID IS the slug — see WorkspaceSlug's doc comment in workspace.types.ts for why this is a separate, minimal collection. */
 export const workspaceSlugsCol = () => collection(db, "workspace_slugs") as CollectionReference<WorkspaceSlug>;

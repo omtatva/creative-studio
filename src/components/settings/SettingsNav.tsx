@@ -15,19 +15,25 @@ import {
   CheckSquare,
   MessageSquareText,
   KeyRound,
-  Globe2,
+  CreditCard,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { ROUTES } from "@/lib/constants/routes";
 import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
-import { useAuthContext } from "@/contexts/AuthContext";
-import { isItSupportUser } from "@/lib/constants/itSupport";
 
+// Every item here manages ONE workspace's own settings — the
+// Workspace Owner/Admin level (see itSupport.ts's two-level model).
+// The platform-wide Super Admin section (Customers, Users, Billing
+// across every workspace, Sales, Plans, Features, Platform Settings,
+// Audit Logs) lives entirely under /super-admin, with its own nav —
+// it is NOT part of this Settings section at all, so a normal
+// workspace owner never sees it here.
 const GROUPS = [
   {
     label: "Workspace",
     items: [
       { href: ROUTES.settingsWorkspace, label: "Workspace", icon: Building2 },
+      { href: ROUTES.settingsBilling, label: "Billing & Plan", icon: CreditCard, ownerAdminOnly: true },
       { href: ROUTES.settingsBranding, label: "Branding", icon: Palette },
       { href: ROUTES.settingsTheme, label: "Theme", icon: Sliders },
     ],
@@ -56,28 +62,18 @@ const GROUPS = [
       { href: ROUTES.settingsReview, label: "Review Settings", icon: MessageSquareText },
     ],
   },
-  {
-    label: "Platform",
-    items: [
-      { href: ROUTES.settingsAllWorkspaces, label: "All Workspaces", icon: Globe2, itSupportOnly: true },
-    ],
-  },
 ];
 
 /** Left-hand sub-nav for the entire /settings section. */
 export function SettingsNav() {
   const pathname = usePathname();
   const { canManageWorkspace } = useCurrentMemberRole();
-  const { firebaseUser } = useAuthContext();
-  const isItSupport = isItSupportUser(firebaseUser);
 
   return (
     <nav className="w-full shrink-0 space-y-6 lg:w-56">
       {GROUPS.map((group) => {
         const visibleItems = group.items.filter(
-          (item) =>
-            (!("ownerAdminOnly" in item && item.ownerAdminOnly) || canManageWorkspace) &&
-            (!("itSupportOnly" in item && item.itSupportOnly) || isItSupport)
+          (item) => !("ownerAdminOnly" in item && item.ownerAdminOnly) || canManageWorkspace
         );
         if (visibleItems.length === 0) return null;
         return (

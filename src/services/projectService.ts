@@ -404,7 +404,7 @@ export async function getProjectMembership(projectId: string, uid: string): Prom
  *   for its rightful owner.
  *
  * Requires the caller to already be authorized to write project_members
- * for this workspace (workspace owner/admin or IT Support — see
+ * for this workspace (workspace owner/admin or Super Admin — see
  * firestore.rules' canManageProject) — called from useProjects.ts only
  * when that's already true, once per workspace per app session.
  */

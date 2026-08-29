@@ -6,7 +6,7 @@ import { useProjectOptions } from "@/hooks/useProjectOptions";
 import { useProjectMembership } from "@/hooks/useProjectMembership";
 import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
 import { useAuthContext } from "@/contexts/AuthContext";
-import { isItSupportUser } from "@/lib/constants/itSupport";
+import { isSuperAdminUser } from "@/lib/constants/itSupport";
 import { Project } from "@/types/project.types";
 import { ProjectOptionsSettings } from "@/types/settings.types";
 
@@ -18,7 +18,7 @@ import { ProjectOptionsSettings } from "@/types/settings.types";
  *
  * Also the SINGLE choke point that authorizes access to a project's
  * detail routes: `hasAccess` is true for a workspace owner/admin, the
- * IT Support account, or anyone with a `project_members` record for
+ * Super Admin account, or anyone with a `project_members` record for
  * this project — everyone else gets `hasAccess === false`, which
  * layout.tsx renders as a Not Found/Access Denied state instead of
  * `children`, protecting all 10 nested routes (overview, board,
@@ -42,13 +42,13 @@ export function ProjectDetailsProvider({ projectId, children }: { projectId: str
   const { project, isLoading, error } = useProject(projectId);
   const { options, isLoading: isLoadingOptions } = useProjectOptions();
   const { canManageWorkspace, isLoading: isLoadingRole } = useCurrentMemberRole();
-  const { firebaseUser } = useAuthContext();
+  const { profile } = useAuthContext();
   const { membership, isLoading: isLoadingMembership } = useProjectMembership(projectId);
 
   const isResolvingAccess = isLoading || isLoadingRole || isLoadingMembership;
   const hasAccess = isResolvingAccess
     ? null
-    : Boolean(project) && (canManageWorkspace || isItSupportUser(firebaseUser) || membership !== null);
+    : Boolean(project) && (canManageWorkspace || isSuperAdminUser(profile) || membership !== null);
 
   return (
     <ProjectDetailsContext.Provider value={{ project, isLoading, error, options, isLoadingOptions, hasAccess }}>

@@ -7,7 +7,7 @@ import { backfillProjectMemberships } from "@/services/projectService";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
-import { isItSupportUser } from "@/lib/constants/itSupport";
+import { isSuperAdminUser } from "@/lib/constants/itSupport";
 import {
   DEFAULT_PROJECT_SORT,
   EMPTY_PROJECT_FILTERS,
@@ -32,7 +32,7 @@ const ID_QUERY_CHUNK_SIZE = 30;
 /**
  * Realtime, WORKSPACE- AND MEMBERSHIP-scoped project list.
  *
- * Workspace owners/admins and the designated IT Support account see
+ * Workspace owners/admins and the designated Super Admin account see
  * every project in the workspace (unchanged from before) — see
  * ProjectMembership's doc comment in project.types.ts for why that's
  * the deliberate bypass, not an oversight: someone has to be able to
@@ -47,7 +47,7 @@ const ID_QUERY_CHUNK_SIZE = 30;
  */
 export function useProjects() {
   const { workspaceId } = useWorkspaceContext();
-  const { firebaseUser } = useAuthContext();
+  const { firebaseUser, profile } = useAuthContext();
   const { canManageWorkspace, isLoading: isLoadingRole } = useCurrentMemberRole();
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -61,11 +61,11 @@ export function useProjects() {
   const [retryCount, setRetryCount] = useState(0);
 
   const uid = firebaseUser?.uid ?? "";
-  const hasWorkspaceWideAccess = canManageWorkspace || isItSupportUser(firebaseUser);
+  const hasWorkspaceWideAccess = canManageWorkspace || isSuperAdminUser(profile);
 
   // Migration: backfill project_members from each existing project's
   // Project.members[] array, once per workspace per app session. Only
-  // an owner/admin/IT-Support visit can trigger it — they're the only
+  // an owner/admin/Super-Admin visit can trigger it — they're the only
   // ones who (a) still see every project under the new model without
   // this having run yet, and (b) are authorized to write
   // project_members under firestore.rules either way. Purely additive
@@ -91,7 +91,7 @@ export function useProjects() {
     setIsLoading(true);
     setError(null);
 
-    // Workspace owner/admin/IT Support: same query as before — every
+    // Workspace owner/admin/Super Admin: same query as before — every
     // project in the workspace.
     if (hasWorkspaceWideAccess) {
       const q = query(projectsCol(), where("workspaceId", "==", workspaceId), orderBy("updatedAt", "desc"));

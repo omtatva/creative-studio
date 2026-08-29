@@ -6,6 +6,8 @@ import { Navbar } from "./Navbar";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { ErrorState } from "@/components/shared/ErrorState";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
+import { useAuthContext } from "@/contexts/AuthContext";
+import { isSuperAdminUser } from "@/lib/constants/itSupport";
 
 /**
  * Shell used by every authenticated route (dashboard, settings).
@@ -18,6 +20,17 @@ import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
  * page under here needs workspaceId, so this is the one place that
  * blocks and shows the real error instead of quietly rendering a
  * dashboard where every write silently fails.
+ *
+ * Exception: the Super Admin (see lib/constants/itSupport.ts) is a
+ * cross-workspace platform identity, not a tenant member — it's
+ * entirely normal for this account to have no valid `activeWorkspaceId`
+ * (no workspace of its own, or one it deleted while testing). Blocking
+ * it here would lock it out of the whole /super-admin section too,
+ * which is the one place a broken workspace pointer doesn't matter at
+ * all. So for this one account, a workspace error renders the normal
+ * shell instead of the full-screen block; workspace-scoped pages it
+ * navigates into still handle `workspace === null` on their own (same
+ * as any other account with zero workspaces).
  *
  * Dark/light + per-workspace branding colors are applied globally by
  * ThemeContext.applyThemeToDocument on <html> — there used to be a
@@ -32,10 +45,12 @@ import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
  */
 export function MainLayout({ children }: { children: ReactNode }) {
   const { error: workspaceError, isLoading: isWorkspaceLoading, refreshWorkspace } = useWorkspaceContext();
+  const { profile } = useAuthContext();
+  const isSuperAdmin = isSuperAdminUser(profile);
 
   return (
     <ProtectedRoute>
-      {!isWorkspaceLoading && workspaceError ? (
+      {!isWorkspaceLoading && workspaceError && !isSuperAdmin ? (
         <div className="flex min-h-screen items-center justify-center p-6">
           <ErrorState title="Couldn't load your workspace" message={workspaceError} onRetry={refreshWorkspace} />
         </div>

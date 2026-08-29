@@ -4,6 +4,7 @@
  * only touches this file.
  */
 export const ROUTES = {
+  home: "/",
   login: "/login",
   signup: "/signup",
   pricing: "/pricing",
@@ -23,7 +24,19 @@ export const ROUTES = {
   settingsReview: "/settings/review-settings",
   settingsAccessControl: "/settings/access-control",
   settingsAi: "/settings/ai",
-  settingsAllWorkspaces: "/settings/all-workspaces",
+  settingsBilling: "/settings/billing",
+  // Platform-wide Super Admin section — see lib/constants/itSupport.ts.
+  // Deliberately its own top-level nav (Sidebar.tsx), not nested under
+  // /settings: Super Admin manages EVERY workspace, not one.
+  superAdmin: "/super-admin",
+  superAdminCustomers: "/super-admin/customers",
+  superAdminUsers: "/super-admin/users",
+  superAdminBilling: "/super-admin/billing",
+  superAdminPlans: "/super-admin/plans",
+  superAdminSales: "/super-admin/sales",
+  superAdminFeatures: "/super-admin/features",
+  superAdminPlatformSettings: "/super-admin/platform-settings",
+  superAdminAuditLogs: "/super-admin/audit-logs",
   workspaceCreate: "/workspace/create",
   projects: "/projects",
   tasks: "/tasks",
