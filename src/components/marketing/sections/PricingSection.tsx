@@ -1,15 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils/cn";
+import { getPlanConfig } from "@/services/platformConfigService";
+import { mergePlanConfig } from "@/lib/planConfig";
 import {
   PLAN_ORDER,
-  PLAN_LIMITS,
-  PLAN_PRICING,
   PLAN_DISPLAY_NAMES,
   FEATURE_KEYS,
   type FeatureKey,
@@ -19,10 +19,11 @@ import { SectionWrapper } from "../SectionWrapper";
 import { ContactSalesModal } from "./ContactSalesModal";
 
 /**
- * Every number and feature shown here comes straight from
- * planLimits.ts / planService.ts — the same source Settings > Plan &
- * Usage and every server-side limit check reads. Nothing on this
- * page is a separate hardcoded copy of a plan's limits.
+ * Renders from the static PLAN_LIMITS/PLAN_PRICING defaults first (no
+ * loading flash on a marketing page), then swaps in Super Admin >
+ * Plans' live edits (platform_config/plans, public read — see
+ * mergePlanConfig) as soon as they load. A plan nobody has ever
+ * edited keeps showing exactly its static defaults forever.
  */
 const FEATURE_LABELS: Record<FeatureKey, string> = {
   aiStudio: "AI Studio",
@@ -50,6 +51,13 @@ function ctaLabel(plan: WorkspacePlan): string {
 export function PricingSection() {
   const router = useRouter();
   const [isContactSalesOpen, setIsContactSalesOpen] = useState(false);
+  const [planData, setPlanData] = useState(() => mergePlanConfig(null));
+
+  useEffect(() => {
+    getPlanConfig()
+      .then((live) => setPlanData(mergePlanConfig(live)))
+      .catch((err) => console.error("[PricingSection] failed to load live plan config, showing defaults:", err));
+  }, []);
 
   function handleCta(plan: WorkspacePlan) {
     if (plan === "enterprise") {
@@ -72,8 +80,8 @@ export function PricingSection() {
 
       <div className="mt-14 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         {PLAN_ORDER.map((plan) => {
-          const limits = PLAN_LIMITS[plan];
-          const pricing = PLAN_PRICING[plan];
+          const limits = planData.limits[plan];
+          const pricing = planData.pricing[plan];
           const isHighlighted = plan === HIGHLIGHTED_PLAN;
 
           return (

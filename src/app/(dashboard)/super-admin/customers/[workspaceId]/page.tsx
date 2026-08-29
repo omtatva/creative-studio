@@ -3,7 +3,7 @@
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft, FolderKanban } from "lucide-react";
+import { AlertTriangle, ArrowLeft, FolderKanban, Trash2 } from "lucide-react";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -17,9 +17,9 @@ import { useToast } from "@/hooks/useToast";
 import { isSuperAdminUser } from "@/lib/constants/itSupport";
 import { getWorkspace, deleteWorkspaceAccess } from "@/services/workspaceService";
 import { getWorkspaceMembers } from "@/services/userService";
-import { getWorkspaceProjects } from "@/services/projectService";
+import { getWorkspaceProjects, deleteProject } from "@/services/projectService";
 import { PLAN_DISPLAY_NAMES } from "@/lib/constants/planLimits";
-import { ROUTES } from "@/lib/constants/routes";
+import { ROUTES, projectRoute } from "@/lib/constants/routes";
 import { formatDate } from "@/lib/utils/date";
 import { Workspace, Member } from "@/types/workspace.types";
 import { Project } from "@/types/project.types";
@@ -50,6 +50,10 @@ export default function SuperAdminCustomerDetailPage({ params }: { params: Promi
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
+
+  const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
+  const [deleteProjectConfirmText, setDeleteProjectConfirmText] = useState("");
+  const [isDeletingProject, setIsDeletingProject] = useState(false);
 
   useEffect(() => {
     if (!isSuperAdmin) return;
@@ -84,6 +88,22 @@ export default function SuperAdminCustomerDetailPage({ params }: { params: Promi
       setIsDeleting(false);
       setIsDeleteModalOpen(false);
       setDeleteConfirmText("");
+    }
+  }
+
+  async function handleDeleteProject() {
+    if (!deleteProjectTarget) return;
+    setIsDeletingProject(true);
+    try {
+      await deleteProject(workspaceId, deleteProjectTarget.id);
+      setProjects((prev) => prev.filter((p) => p.id !== deleteProjectTarget.id));
+      toast.success(`"${deleteProjectTarget.name}" deleted`);
+      setDeleteProjectTarget(null);
+      setDeleteProjectConfirmText("");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete this project");
+    } finally {
+      setIsDeletingProject(false);
     }
   }
 
@@ -157,7 +177,7 @@ export default function SuperAdminCustomerDetailPage({ params }: { params: Promi
           <div className="flex flex-col gap-2">
             {projects.map((project) => (
               <div key={project.id} className="flex items-center justify-between gap-3 rounded-theme border border-border bg-surface p-3">
-                <div className="min-w-0 flex-1">
+                <Link href={projectRoute(project.id, "overview")} className="min-w-0 flex-1 hover:underline">
                   <div className="flex items-center gap-2">
                     <p className="truncate text-sm font-medium text-foreground">{project.name}</p>
                     {project.isArchived && <Badge variant="default">Archived</Badge>}
@@ -165,13 +185,21 @@ export default function SuperAdminCustomerDetailPage({ params }: { params: Promi
                   <p className="text-xs text-foreground-muted">
                     {project.members.length} member{project.members.length === 1 ? "" : "s"} · Updated {formatDate(project.updatedAt)}
                   </p>
-                </div>
+                </Link>
                 <div className="w-24 shrink-0">
                   <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-muted">
                     <div className="h-full rounded-full bg-primary" style={{ width: `${project.progress}%` }} />
                   </div>
                   <p className="mt-1 text-right text-[10px] text-foreground-muted">{project.progress}%</p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setDeleteProjectTarget(project)}
+                  className="shrink-0 rounded-theme p-1.5 text-foreground-muted hover:bg-error/10 hover:text-error"
+                  aria-label={`Delete ${project.name}`}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
               </div>
             ))}
           </div>
@@ -228,6 +256,51 @@ export default function SuperAdminCustomerDetailPage({ params }: { params: Promi
             </Button>
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        isOpen={deleteProjectTarget !== null}
+        onClose={() => {
+          setDeleteProjectTarget(null);
+          setDeleteProjectConfirmText("");
+        }}
+        title="Delete this project?"
+      >
+        {deleteProjectTarget && (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-start gap-2 rounded-theme border border-error/30 bg-error/5 p-3 text-sm text-foreground">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-error" />
+              <span>
+                This permanently deletes <strong>{deleteProjectTarget.name}</strong> — its tasks, files, and reviews. This
+                cannot be undone.
+              </span>
+            </div>
+            <label className="flex flex-col gap-1.5 text-sm text-foreground">
+              Type <strong>{deleteProjectTarget.name}</strong> to confirm
+              <Input value={deleteProjectConfirmText} onChange={(e) => setDeleteProjectConfirmText(e.target.value)} placeholder={deleteProjectTarget.name} />
+            </label>
+            <div className="mt-2 flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setDeleteProjectTarget(null);
+                  setDeleteProjectConfirmText("");
+                }}
+                disabled={isDeletingProject}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={handleDeleteProject}
+                isLoading={isDeletingProject}
+                disabled={deleteProjectConfirmText !== deleteProjectTarget.name}
+              >
+                Delete project
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

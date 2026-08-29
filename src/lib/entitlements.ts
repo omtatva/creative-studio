@@ -23,16 +23,26 @@ import type { SubscriptionStatus, WorkspaceSubscription } from "@/types/billing.
  */
 const ENTITLED_STATUSES: ReadonlySet<SubscriptionStatus> = new Set(["trialing", "active"]);
 
-export function resolveEntitlements(subscription: Pick<WorkspaceSubscription, "planId" | "status" | "customEntitlements"> | null): {
+export function resolveEntitlements(
+  subscription: Pick<WorkspaceSubscription, "planId" | "status" | "customEntitlements"> | null,
+  // Defaults to the static PLAN_LIMITS — callers that have already
+  // fetched Super Admin > Plans' live overrides (see
+  // lib/planConfig.ts's mergePlanConfig) pass those instead, so a
+  // NEW subscription event resolves against current numbers. See
+  // billingAdmin.ts's applySubscriptionUpdate for the one place this
+  // actually happens; every other caller keeps the exact old
+  // static-only behavior by omitting this argument.
+  planLimits: Record<WorkspacePlan, WorkspacePlanLimits> = PLAN_LIMITS
+): {
   plan: WorkspacePlan;
   limits: WorkspacePlanLimits;
 } {
   if (!subscription || !ENTITLED_STATUSES.has(subscription.status)) {
-    return { plan: DEFAULT_PLAN, limits: PLAN_LIMITS[DEFAULT_PLAN] };
+    return { plan: DEFAULT_PLAN, limits: planLimits[DEFAULT_PLAN] };
   }
 
   const basePlan = subscription.planId;
-  const baseLimits = PLAN_LIMITS[basePlan];
+  const baseLimits = planLimits[basePlan];
 
   // Enterprise customers routinely negotiate limits PLAN_LIMITS.enterprise
   // doesn't represent (that entry is just "unlimited" as a sane default) —

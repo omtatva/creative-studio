@@ -11,6 +11,7 @@ import { AppUser } from "@/types/user.types";
 import { Workspace, Member, WorkspaceInvite, CustomRole, WorkspaceSlug } from "@/types/workspace.types";
 import { WorkspaceSubscription, SalesLead } from "@/types/billing.types";
 import { PlatformAuditLogEntry } from "@/types/platformAudit.types";
+import { PlatformPlanConfig } from "@/types/platformConfig.types";
 import { WorkspaceSettings } from "@/types/settings.types";
 import { Project, ProjectMembership } from "@/types/project.types";
 import { Task, TaskComment, TaskAttachment, TaskActivityEntry } from "@/types/task.types";
@@ -73,6 +74,9 @@ export const salesLeadDoc = (leadId: string) => doc(db, "sales_leads", leadId) a
 
 /** See PlatformAuditLogEntry's doc comment in platformAudit.types.ts. Admin-SDK-write-only; read is Super-Admin-only. */
 export const platformAuditLogsCol = () => collection(db, "platform_audit_logs") as CollectionReference<PlatformAuditLogEntry>;
+
+/** See PlatformPlanConfig's doc comment in platformConfig.types.ts — a singleton doc, public read, Super-Admin-only write. */
+export const platformPlanConfigDoc = () => doc(db, "platform_config", "plans") as DocumentReference<PlatformPlanConfig>;
 
 /** Document ID IS the slug — see WorkspaceSlug's doc comment in workspace.types.ts for why this is a separate, minimal collection. */
 export const workspaceSlugsCol = () => collection(db, "workspace_slugs") as CollectionReference<WorkspaceSlug>;

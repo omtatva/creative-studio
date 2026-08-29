@@ -2,9 +2,17 @@ import "server-only";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/server/firebaseAdmin";
 import { resolveEntitlements } from "@/lib/entitlements";
+import { mergePlanConfig } from "@/lib/planConfig";
 import { DEFAULT_PLAN } from "@/lib/constants/planLimits";
 import type { WorkspacePlan } from "@/types/workspace.types";
 import type { WorkspaceSubscription, SubscriptionStatus, BillingProvider } from "@/types/billing.types";
+import type { PlatformPlanConfig } from "@/types/platformConfig.types";
+
+/** Server-side read of the same live plan config the public pricing page and Super Admin > Plans use — see mergePlanConfig's doc comment. */
+async function getLivePlanLimits() {
+  const snap = await adminDb().collection("platform_config").doc("plans").get();
+  return mergePlanConfig(snap.exists ? (snap.data() as PlatformPlanConfig) : null).limits;
+}
 
 /**
  * Server-only (admin SDK) writes to workspaces/{id}/billing/subscription
@@ -67,7 +75,7 @@ export async function applySubscriptionUpdate(
   const next: WorkspaceSubscription = { ...base, ...patch, workspaceId, updatedBy, updatedAt: now };
   await ref.set(next, { merge: false });
 
-  const { plan, limits } = resolveEntitlements(next);
+  const { plan, limits } = resolveEntitlements(next, await getLivePlanLimits());
   await adminDb()
     .collection("workspaces")
     .doc(workspaceId)

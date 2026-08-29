@@ -324,6 +324,18 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Super Admin > Plans' editable "cost and services" — see
+    // PlatformPlanConfig's doc comment in platformConfig.types.ts.
+    // Deliberately PUBLIC read (`if true`, no isSignedIn() even):
+    // plan pricing/features are marketing content the logged-out
+    // homepage's pricing page must be able to show. Write is
+    // Super-Admin-only — a workspace owner can never edit platform
+    // pricing themselves.
+    match /platform_config/{docId} {
+      allow read: if true;
+      allow write: if isSuperAdmin();
+    }
+
     match /members/{memberId} {
       allow read: if isSignedIn();
 
