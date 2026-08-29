@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
 import { createWorkspace, isSlugAvailable } from "@/services/workspaceService";
+import { startTrial } from "@/services/billingService";
 import { CreateWorkspacePayload } from "@/types/workspace.types";
 import { ROUTES } from "@/lib/constants/routes";
 
@@ -44,6 +45,10 @@ export function useWorkspace() {
         firebaseUser.photoURL,
         payload
       );
+      // Best-effort: a brand-new workspace should still exist even if
+      // starting its trial fails for some reason (network blip, etc.)
+      // — never fail workspace creation itself over this.
+      await startTrial(newWorkspaceId).catch((err) => console.error("[useWorkspace] startTrial failed (workspace still created):", err));
       await refreshProfile();
       if (options?.redirectOnSuccess !== false) {
         router.push(ROUTES.dashboard);

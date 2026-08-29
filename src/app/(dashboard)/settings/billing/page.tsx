@@ -13,7 +13,7 @@ import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
 import { useToast } from "@/hooks/useToast";
 import { getWorkspaceSubscription } from "@/services/subscriptionService";
 import { createCheckoutSession, changePlan } from "@/services/billingService";
-import { SUBSCRIPTION_STATUS_LABEL } from "@/lib/entitlements";
+import { SUBSCRIPTION_STATUS_LABEL, resolveEntitlements, isTrialExpired } from "@/lib/entitlements";
 import { PLAN_ORDER, PLAN_DISPLAY_NAMES, PLAN_PRICING } from "@/lib/constants/planLimits";
 import { formatDate } from "@/lib/utils/date";
 import { WorkspaceSubscription } from "@/types/billing.types";
@@ -80,8 +80,16 @@ export default function BillingPlanSettingsPage() {
     );
   }
 
+  // Computed LIVE from the subscription doc rather than trusted from
+  // workspace.plan/.subscriptionStatus — those are a cache that only
+  // re-syncs on the next real subscription event, so right after a
+  // trial's trialEnd passes they'd still show the stale trial plan
+  // until something else changes the subscription. See
+  // resolveEntitlements/isTrialExpired's doc comments.
+  const trialExpired = isTrialExpired(subscription ?? null);
+  const { plan: effectivePlan } = resolveEntitlements(subscription ?? null);
   const status = subscription?.status ?? (workspace.subscriptionStatus === "pending_payment" ? "incomplete" : "active");
-  const isTrialing = subscription?.status === "trialing" && subscription.trialEnd;
+  const isTrialing = subscription?.status === "trialing" && subscription.trialEnd && !trialExpired;
   const trialDaysLeft = isTrialing ? Math.max(0, Math.ceil((new Date(subscription!.trialEnd!).getTime() - Date.now()) / (1000 * 60 * 60 * 24))) : null;
 
   return (
@@ -95,15 +103,21 @@ export default function BillingPlanSettingsPage() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2">
-              <span className="text-lg font-semibold text-foreground">{PLAN_DISPLAY_NAMES[workspace.plan]}</span>
-              <Badge variant={status === "active" || status === "trialing" ? "success" : status === "past_due" ? "warning" : "default"}>
-                {SUBSCRIPTION_STATUS_LABEL[status as keyof typeof SUBSCRIPTION_STATUS_LABEL] ?? "Pending"}
+              <span className="text-lg font-semibold text-foreground">{PLAN_DISPLAY_NAMES[effectivePlan]}</span>
+              <Badge variant={trialExpired ? "warning" : status === "active" || status === "trialing" ? "success" : status === "past_due" ? "warning" : "default"}>
+                {trialExpired ? "Trial ended" : (SUBSCRIPTION_STATUS_LABEL[status as keyof typeof SUBSCRIPTION_STATUS_LABEL] ?? "Pending")}
               </Badge>
             </div>
             {trialDaysLeft !== null && (
               <p className="flex items-center gap-1.5 text-xs text-primary">
                 <Clock className="h-3.5 w-3.5" />
-                {PLAN_DISPLAY_NAMES[workspace.plan]} trial — {trialDaysLeft} day{trialDaysLeft === 1 ? "" : "s"} remaining
+                {PLAN_DISPLAY_NAMES[subscription!.planId]} trial — {trialDaysLeft} day{trialDaysLeft === 1 ? "" : "s"} remaining
+              </p>
+            )}
+            {trialExpired && (
+              <p className="flex items-center gap-1.5 text-xs text-warning">
+                <Clock className="h-3.5 w-3.5" />
+                Your {PLAN_DISPLAY_NAMES[subscription!.planId]} trial ended — you&apos;re back on {PLAN_DISPLAY_NAMES.starter} limits until you upgrade.
               </p>
             )}
             {subscription?.currentPeriodEnd && (
@@ -126,7 +140,7 @@ export default function BillingPlanSettingsPage() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           {CHOOSABLE_PLANS.map((planId) => {
             const pricing = PLAN_PRICING[planId];
-            const isCurrent = workspace.plan === planId && (status === "active" || status === "trialing");
+            const isCurrent = effectivePlan === planId && (status === "active" || (status === "trialing" && !trialExpired));
             return (
               <div key={planId} className={`flex flex-col gap-3 rounded-theme border p-4 ${isCurrent ? "border-primary bg-primary/5" : "border-border bg-surface"}`}>
                 <div>
@@ -141,7 +155,7 @@ export default function BillingPlanSettingsPage() {
                   </span>
                 ) : (
                   <Button size="sm" variant="outline" onClick={() => handleChoosePlan(planId)} isLoading={isChoosing === planId}>
-                    {PLAN_ORDER.indexOf(planId) > PLAN_ORDER.indexOf(workspace.plan) ? "Upgrade" : "Switch"}
+                    {PLAN_ORDER.indexOf(planId) > PLAN_ORDER.indexOf(effectivePlan) ? "Upgrade" : "Switch"}
                   </Button>
                 )}
               </div>

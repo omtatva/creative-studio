@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { WelcomeBanner } from "@/components/dashboard/WelcomeBanner";
+import { TrialBanner } from "@/components/dashboard/TrialBanner";
 import { AnalyticsCards } from "@/components/dashboard/AnalyticsCards";
 import { RecentProjects } from "@/components/dashboard/RecentProjects";
 import { PendingReviews } from "@/components/dashboard/PendingReviews";
@@ -48,6 +49,7 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <TrialBanner />
       {!isHidden("welcomeBanner") && <WelcomeBanner />}
       {!isHidden("analyticsCards") && <AnalyticsCards />}
 

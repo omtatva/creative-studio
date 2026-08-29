@@ -19,12 +19,24 @@ import type { SubscriptionStatus, WorkspaceSubscription } from "@/types/billing.
  * A status that isn't genuinely paying (past_due beyond grace,
  * canceled, incomplete, paused) falls back to the free plan's limits —
  * "enforce the selected fallback plan" per the trial/lapse behavior
- * this was built for. `trialing` and `active` both get the real plan.
+ * this was built for. `trialing` and `active` both get the real plan —
+ * EXCEPT a `trialing` subscription whose `trialEnd` has already
+ * passed: there's no cron job in this codebase to flip that status
+ * automatically the moment a trial ends, so expiry is computed live,
+ * right here, every time entitlements are resolved. This is what
+ * makes the 7-day trial (see /api/billing/start-trial) actually end
+ * on time without needing scheduled infrastructure — Settings >
+ * Billing & Plan's "Upgrade" banner reads the same subscription doc
+ * and shows the reminder once this falls back.
  */
 const ENTITLED_STATUSES: ReadonlySet<SubscriptionStatus> = new Set(["trialing", "active"]);
 
+export function isTrialExpired(subscription: Pick<WorkspaceSubscription, "status" | "trialEnd"> | null): boolean {
+  return !!subscription && subscription.status === "trialing" && !!subscription.trialEnd && new Date(subscription.trialEnd) < new Date();
+}
+
 export function resolveEntitlements(
-  subscription: Pick<WorkspaceSubscription, "planId" | "status" | "customEntitlements"> | null,
+  subscription: Pick<WorkspaceSubscription, "planId" | "status" | "customEntitlements" | "trialEnd"> | null,
   // Defaults to the static PLAN_LIMITS — callers that have already
   // fetched Super Admin > Plans' live overrides (see
   // lib/planConfig.ts's mergePlanConfig) pass those instead, so a
@@ -37,7 +49,7 @@ export function resolveEntitlements(
   plan: WorkspacePlan;
   limits: WorkspacePlanLimits;
 } {
-  if (!subscription || !ENTITLED_STATUSES.has(subscription.status)) {
+  if (!subscription || !ENTITLED_STATUSES.has(subscription.status) || isTrialExpired(subscription)) {
     return { plan: DEFAULT_PLAN, limits: planLimits[DEFAULT_PLAN] };
   }
 
