@@ -1,13 +1,17 @@
 "use client";
 
 import { type ReactNode } from "react";
+import Link from "next/link";
 import { Sidebar } from "./Sidebar";
 import { Navbar } from "./Navbar";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { ErrorState } from "@/components/shared/ErrorState";
+import { Button } from "@/components/ui/Button";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
 import { useAuthContext } from "@/contexts/AuthContext";
+import { useAuth } from "@/hooks/useAuth";
 import { isSuperAdminUser } from "@/lib/constants/itSupport";
+import { ROUTES } from "@/lib/constants/routes";
 
 /**
  * Shell used by every authenticated route (dashboard, settings).
@@ -46,13 +50,27 @@ import { isSuperAdminUser } from "@/lib/constants/itSupport";
 export function MainLayout({ children }: { children: ReactNode }) {
   const { error: workspaceError, isLoading: isWorkspaceLoading, refreshWorkspace } = useWorkspaceContext();
   const { profile } = useAuthContext();
+  const { logout, isSubmitting: isSigningOut } = useAuth();
   const isSuperAdmin = isSuperAdminUser(profile);
 
   return (
     <ProtectedRoute>
       {!isWorkspaceLoading && workspaceError && !isSuperAdmin ? (
-        <div className="flex min-h-screen items-center justify-center p-6">
+        <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6">
           <ErrorState title="Couldn't load your workspace" message={workspaceError} onRetry={refreshWorkspace} />
+          {/* This screen blocks the whole app shell (sidebar/navbar,
+              where sign-out normally lives) — without an escape hatch
+              here, a genuinely deleted/invalid workspace pointer traps
+              the account with no way to sign out or start over. */}
+          <div className="flex items-center gap-3">
+            <Link href={ROUTES.workspaceCreate} className="text-sm font-medium text-primary hover:underline">
+              Create a new workspace
+            </Link>
+            <span className="text-sm text-foreground-muted">·</span>
+            <Button size="sm" variant="outline" onClick={logout} isLoading={isSigningOut}>
+              Sign out
+            </Button>
+          </div>
         </div>
       ) : (
         <div className="flex min-h-screen bg-background">
