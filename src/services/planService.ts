@@ -124,12 +124,23 @@ export async function checkWorkspaceLimit(workspace: Workspace, metric: Workspac
  * should call instead of ever writing `if (workspace.plan === "pro")`
  * inline — thin, obviously-named wrappers over the checks above so
  * plans can change shape later without hunting down scattered string
- * comparisons. All three are UX pre-flight checks (fast, no network
- * round trip beyond what checkWorkspaceLimit already does) — the real,
- * unbypassable enforcement for members/projects is the Firestore
- * rules' own get()-based counter comparison (see firestore.rules'
- * `members`/`projects` create rules), so a client that skips calling
- * these still can't exceed its plan.
+ * comparisons.
+ *
+ * IMPORTANT, disclosed limitation (Security audit, Section 28 —
+ * "entitlement enforcement MUST be server-side"): all three are
+ * CLIENT-SIDE pre-flight checks only. `firestore.rules` does NOT
+ * enforce maxMembers/maxProjects — Firestore security rules have no
+ * primitive for "count how many documents already match X" during a
+ * create rule, so a true atomic limit would need either a maintained
+ * counter field updated transactionally on every create/delete, or
+ * routing member/project creation through a server API route with an
+ * Admin SDK `.count()` check (the pattern already used in
+ * /api/billing/change-plan for exactly this reason). Neither exists
+ * yet — a determined client that skips calling checkWorkspaceLimit
+ * directly via the Firestore SDK CAN currently exceed a plan's
+ * member/project limit. This is a real, unresolved gap, not
+ * "unbypassable" as an earlier version of this comment incorrectly
+ * claimed — see the security report's residual-risk list.
  */
 export function getWorkspaceEntitlements(workspace: Workspace): WorkspacePlanLimits {
   return workspace.limits;

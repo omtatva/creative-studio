@@ -116,6 +116,12 @@ export async function runGeneration({ workspaceId, projectId, requestedBy, aiSet
         method: "POST",
         headers: { "Content-Type": "application/json", ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
         body: JSON.stringify({
+          // Server now independently verifies real membership + AI
+          // feature entitlement + monthly quota against this — see
+          // the route's SECURITY doc comment. Sending it is not what
+          // authorizes anything; the server's own members/{workspaceId}_{uid}
+          // lookup is.
+          workspaceId,
           provider: aiSettings.provider,
           model: aiSettings.defaultModel,
           temperature: aiSettings.temperature,

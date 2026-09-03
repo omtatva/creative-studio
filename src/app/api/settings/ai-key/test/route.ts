@@ -3,6 +3,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { verifyRequestAuth, AuthVerificationError } from "@/lib/server/firebaseAdmin";
 import { decryptSecret } from "@/lib/server/secretCrypto";
 import { generateNvidiaText, NvidiaApiError } from "@/lib/server/nvidiaClient";
+import { enforceRateLimit, RateLimitExceededError } from "@/lib/server/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -30,11 +31,21 @@ interface TestRequestBody {
  * check at all before.
  */
 export async function POST(request: NextRequest) {
+  let uid: string;
   try {
-    await verifyRequestAuth(request);
+    ({ uid } = await verifyRequestAuth(request));
   } catch (err) {
     const status = err instanceof AuthVerificationError ? err.status : 401;
     return NextResponse.json({ error: err instanceof Error ? err.message : "Authentication failed." }, { status });
+  }
+
+  try {
+    await enforceRateLimit(`ai-key-test:${uid}`, 10, 60);
+  } catch (err) {
+    if (err instanceof RateLimitExceededError) {
+      return NextResponse.json({ error: err.message }, { status: 429 });
+    }
+    throw err;
   }
 
   let body: TestRequestBody;

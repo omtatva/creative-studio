@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyRequestAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
 import { applySubscriptionUpdate } from "@/lib/server/billingAdmin";
+import { logPlatformAudit } from "@/lib/server/platformAudit";
+import { enforceRateLimit, RateLimitExceededError } from "@/lib/server/rateLimit";
 import { PLAN_LIMITS } from "@/lib/constants/planLimits";
 import type { WorkspacePlan } from "@/types/workspace.types";
 
@@ -28,6 +30,11 @@ const CHOOSABLE_PLANS: WorkspacePlan[] = ["starter", "pro", "business"];
  * A paid plan NEVER becomes `active` from this route — only a webhook
  * (or, right now, Super Admin manually confirming payment happened
  * out-of-band) can do that. See applySubscriptionUpdate's doc comment.
+ *
+ * When a real provider is connected: price/currency for `planId` MUST
+ * be resolved here from PLAN_PRICING (server-side, trusted), never
+ * accepted from the client even as a sanity-check value — the browser
+ * may request a plan by id, never define what it costs.
  */
 export async function POST(request: NextRequest) {
   let uid: string;
@@ -36,6 +43,15 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     const status = err instanceof AuthVerificationError ? err.status : 401;
     return NextResponse.json({ error: err instanceof Error ? err.message : "Authentication failed." }, { status });
+  }
+
+  try {
+    await enforceRateLimit(`billing-checkout:${uid}`, 10, 300);
+  } catch (err) {
+    if (err instanceof RateLimitExceededError) {
+      return NextResponse.json({ error: err.message }, { status: 429 });
+    }
+    throw err;
   }
 
   let body: { workspaceId?: string; planId?: string };
@@ -69,6 +85,8 @@ export async function POST(request: NextRequest) {
     { planId: planId as WorkspacePlan, status: "incomplete", billingProvider: "manual" },
     uid
   );
+
+  await logPlatformAudit({ actorUid: uid, action: "subscription_status_changed", workspaceId, details: { event: "checkout_created", planId } });
 
   return NextResponse.json({
     success: true,

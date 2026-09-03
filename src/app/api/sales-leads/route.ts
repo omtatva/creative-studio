@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, adminAuth } from "@/lib/server/firebaseAdmin";
 import { sendGmailMessage, GmailApiError } from "@/lib/server/gmailClient";
+import { enforceRateLimit, RateLimitExceededError, getClientIp } from "@/lib/server/rateLimit";
 import { SalesLead } from "@/types/billing.types";
 
 export const runtime = "nodejs";
@@ -32,8 +33,21 @@ interface SubmitLeadBody {
  * route didn't exist — this is the ONLY path a lead can be created
  * through, and it does its own field validation since there's no
  * rules-level shape enforcement to fall back on.
+ *
+ * Being public and unauthenticated makes this the most exploitable
+ * endpoint in the app for pure spam/abuse (no account needed at all)
+ * — rate-limited by IP rather than uid for exactly that reason.
  */
 export async function POST(request: NextRequest) {
+  try {
+    await enforceRateLimit(`sales-lead:${getClientIp(request)}`, 5, 3600);
+  } catch (err) {
+    if (err instanceof RateLimitExceededError) {
+      return NextResponse.json({ error: err.message }, { status: 429 });
+    }
+    throw err;
+  }
+
   let body: SubmitLeadBody;
   try {
     body = await request.json();

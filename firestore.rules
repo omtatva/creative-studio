@@ -324,6 +324,16 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Webhook idempotency ledger — see applySubscriptionUpdateIdempotent
+    // in billingAdmin.ts. Admin-SDK-write-only; Super Admin can read
+    // for debugging a specific event, nobody else (including the
+    // webhook caller itself, which never touches Firestore directly —
+    // only through firebase-admin, which bypasses rules).
+    match /billing_webhook_events/{eventId} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
+    }
+
     // Super Admin > Plans' editable "cost and services" — see
     // PlatformPlanConfig's doc comment in platformConfig.types.ts.
     // Deliberately PUBLIC read (`if true`, no isSignedIn() even):
@@ -803,6 +813,24 @@ service cloud.firestore {
       allow read: if isWorkspaceMember(resource.data.workspaceId);
       allow create: if isWorkspaceMember(request.resource.data.workspaceId);
       allow update, delete: if false;
+    }
+
+    // Atomic, server-only monthly AI quota counter — see
+    // checkAndIncrementAIUsage in lib/server/aiQuota.ts. Deliberately
+    // separate from ai_usage_logs above (that's the human-readable
+    // per-generation record; this is a purpose-built counter for fast,
+    // race-safe limit checks). Admin-SDK-write-only — a client could
+    // otherwise reset or fake its own usage count.
+    match /ai_usage_counters/{counterId} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
+    }
+
+    // Distributed rate-limit counters — see lib/server/rateLimit.ts.
+    // Admin-SDK-write-only; nobody needs to read these directly.
+    match /rate_limits/{limitId} {
+      allow read: if isSuperAdmin();
+      allow write: if false;
     }
 
     // A workspace's own encrypted Gemini key (id = workspaceId). Only

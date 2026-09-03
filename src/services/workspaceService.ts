@@ -4,11 +4,13 @@ import {
   getDoc,
   getDocs,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
   where,
 } from "firebase/firestore";
+import { db } from "@/lib/firebase/config";
 import { workspacesCol, workspaceDoc, workspaceSlugDoc, memberDoc, userDoc, settingsDoc, membersCol } from "@/lib/firebase/firestore";
 import { uploadFile, workspaceLogoRef } from "@/lib/firebase/storage";
 import { getCurrentUser } from "@/lib/firebase/auth";
@@ -158,13 +160,30 @@ export async function createWorkspace(
     }
   }
 
+  // A plain check-then-write here (isSlugAvailable() followed by a
+  // separate setDoc) has a real race: two requests for the same slug
+  // (a double-click, or two tabs) can both pass the availability check
+  // before either writes, and a plain setDoc would silently let the
+  // second overwrite the first's reservation — two Workspace docs
+  // would then exist, but only ONE slug mapping, pointing at whichever
+  // wrote last (see Section 25's "workspace creation race
+  // protection"). A transaction that reads-then-writes the slug doc
+  // atomically closes this: whichever request's transaction commits
+  // first wins the slug outright, and the loser's transaction sees the
+  // now-existing doc and fails cleanly instead of overwriting it.
   await attemptWrite(
     `workspace_slugs/${payload.slug}`,
     () =>
-      setDoc(workspaceSlugDoc(payload.slug), {
-        slug: payload.slug,
-        workspaceId,
-        createdAt: serverTimestamp(),
+      runTransaction(db, async (tx) => {
+        const existing = await tx.get(workspaceSlugDoc(payload.slug));
+        if (existing.exists()) {
+          throw new Error("That workspace URL was just taken by another request. Please choose a different one.");
+        }
+        tx.set(workspaceSlugDoc(payload.slug), {
+          slug: payload.slug,
+          workspaceId,
+          createdAt: serverTimestamp(),
+        });
       }),
     () => deleteDoc(workspaceSlugDoc(payload.slug))
   );

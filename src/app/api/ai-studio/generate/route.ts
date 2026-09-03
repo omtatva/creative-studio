@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { verifyRequestAuth, AuthVerificationError } from "@/lib/server/firebaseAdmin";
+import { verifyRequestAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
+import { checkAndIncrementAIUsage, AIQuotaExceededError } from "@/lib/server/aiQuota";
+import { enforceRateLimit, RateLimitExceededError } from "@/lib/server/rateLimit";
 import { decryptSecret, type EncryptedSecret } from "@/lib/server/secretCrypto";
 import { generateNvidiaText, NvidiaApiError } from "@/lib/server/nvidiaClient";
 
 export const runtime = "nodejs";
 
 interface GenerateRequestBody {
+  /** Required — see the SECURITY doc comment below for why this is now verified, not just used for display. */
+  workspaceId?: string;
   provider?: "gemini" | "nvidia" | "ollama";
   model?: string;
   temperature?: number;
@@ -41,24 +45,46 @@ const DEFAULT_MODEL_BY_PROVIDER = {
  * this route calls directly at the workspace's configured URL
  * (default http://localhost:11434). Nothing about it is a secret.
  *
- * SECURITY: this route previously had NO authentication check at
- * all — any anonymous caller could POST here and consume the
- * server's own shared GEMINI_API_KEY/NVIDIA_API_KEY (the fallback
- * used when no workspace key is supplied) for free, with no rate
- * limit. verifyRequestAuth below closes that — every caller must be
- * a real, currently-authenticated Firebase user. This does not (and
- * doesn't need to) verify WHICH workspace's key is being used: a
- * workspace's own encrypted key ciphertext is itself only ever
- * readable by that workspace's members (Firestore rules on
- * `settings/{workspaceId}`), so simply requiring sign-in is what
- * closes the actual open door — full anonymous, unauthenticated use.
+ * SECURITY (this route previously had NONE of the following):
+ *  - No authentication check at all — any anonymous caller could POST
+ *    here and consume the server's own shared GEMINI_API_KEY/
+ *    NVIDIA_API_KEY for free. verifyRequestAuth closes that.
+ *  - No workspace-membership check — any signed-in user, from ANY
+ *    workspace or none, could generate against the server's shared
+ *    key. `workspaceId` is now required and checked against a real
+ *    `members/{workspaceId}_{uid}` doc via the Admin SDK — never
+ *    trusted just because the client sent it.
+ *  - No feature-entitlement check — a workspace whose plan doesn't
+ *    include AI Studio could still use it.
+ *  - No quota enforcement AT ALL server-side — aiService.ts's
+ *    checkWorkspaceAIUsage only ever ran client-side, so any caller
+ *    that skipped it (or called this route directly) had unlimited
+ *    generations regardless of plan. checkAndIncrementAIUsage now
+ *    enforces the workspace's real maxAIRequestsPerMonth atomically
+ *    (a Firestore transaction, so two concurrent requests can't both
+ *    slip in under the limit — Section 29/38), BEFORE the expensive
+ *    provider call, not after.
  */
 export async function POST(request: NextRequest) {
+  let uid: string;
   try {
-    await verifyRequestAuth(request);
+    ({ uid } = await verifyRequestAuth(request));
   } catch (err) {
     const status = err instanceof AuthVerificationError ? err.status : 401;
     return NextResponse.json({ error: err instanceof Error ? err.message : "Authentication failed." }, { status });
+  }
+
+  // Short-window burst limit, independent of the monthly quota below —
+  // stops one account from hammering the (possibly shared, server-
+  // funded) provider key in a tight loop even while still under its
+  // monthly cap.
+  try {
+    await enforceRateLimit(`ai-generate:${uid}`, 20, 60);
+  } catch (err) {
+    if (err instanceof RateLimitExceededError) {
+      return NextResponse.json({ error: err.message }, { status: 429 });
+    }
+    throw err;
   }
 
   let body: GenerateRequestBody;
@@ -68,11 +94,42 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
 
-  const { model, temperature, maxTokens, prompt } = body;
+  const { workspaceId, model, temperature, maxTokens, prompt } = body;
   const provider = body.provider === "nvidia" ? "nvidia" : body.provider === "ollama" ? "ollama" : "gemini";
 
+  if (!workspaceId) {
+    return NextResponse.json({ error: "workspaceId is required." }, { status: 400 });
+  }
   if (!prompt || !prompt.trim()) {
     return NextResponse.json({ error: "Prompt is required." }, { status: 400 });
+  }
+
+  const memberSnap = await adminDb().collection("members").doc(`${workspaceId}_${uid}`).get();
+  if (!memberSnap.exists) {
+    return NextResponse.json({ error: "You aren't a member of this workspace." }, { status: 403 });
+  }
+
+  const workspaceSnap = await adminDb().collection("workspaces").doc(workspaceId).get();
+  if (!workspaceSnap.exists) {
+    return NextResponse.json({ error: "This workspace doesn't exist." }, { status: 404 });
+  }
+  const workspaceLimits = workspaceSnap.data()?.limits as
+    | { enabledFeatures?: string[]; maxAIRequestsPerMonth?: number }
+    | undefined;
+  if (!workspaceLimits?.enabledFeatures?.includes("aiStudio")) {
+    return NextResponse.json({ error: "AI Studio isn't included in this workspace's current plan." }, { status: 403 });
+  }
+
+  try {
+    await checkAndIncrementAIUsage(workspaceId, workspaceLimits.maxAIRequestsPerMonth ?? 0);
+  } catch (err) {
+    if (err instanceof AIQuotaExceededError) {
+      return NextResponse.json({ error: err.message }, { status: 429 });
+    }
+    console.error("[ai-studio/generate] quota check failed:", err);
+    // Fail closed (Section 37) — if the quota can't be verified, do
+    // not assume the workspace is under its limit.
+    return NextResponse.json({ error: "Couldn't verify this workspace's AI usage. Try again in a moment." }, { status: 503 });
   }
 
   const resolvedModel = model || DEFAULT_MODEL_BY_PROVIDER[provider];

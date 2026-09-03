@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyRequestAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
 import { applySubscriptionUpdate, getSubscriptionAdmin } from "@/lib/server/billingAdmin";
+import { logPlatformAudit } from "@/lib/server/platformAudit";
+import { enforceRateLimit, RateLimitExceededError } from "@/lib/server/rateLimit";
 import { PLAN_LIMITS } from "@/lib/constants/planLimits";
 import type { WorkspacePlan } from "@/types/workspace.types";
 
@@ -26,6 +28,15 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     const status = err instanceof AuthVerificationError ? err.status : 401;
     return NextResponse.json({ error: err instanceof Error ? err.message : "Authentication failed." }, { status });
+  }
+
+  try {
+    await enforceRateLimit(`billing-change-plan:${uid}`, 10, 300);
+  } catch (err) {
+    if (err instanceof RateLimitExceededError) {
+      return NextResponse.json({ error: err.message }, { status: 429 });
+    }
+    throw err;
   }
 
   let body: { workspaceId?: string; planId?: string };
@@ -86,6 +97,8 @@ export async function POST(request: NextRequest) {
     { planId: planId as WorkspacePlan, status: "incomplete", billingProvider: existing?.billingProvider ?? "manual" },
     uid
   );
+
+  await logPlatformAudit({ actorUid: uid, action: "subscription_status_changed", workspaceId, details: { event: "plan_change_requested", planId } });
 
   return NextResponse.json({ success: true, subscription, message: "Your plan change has been recorded. It activates once payment is confirmed." });
 }

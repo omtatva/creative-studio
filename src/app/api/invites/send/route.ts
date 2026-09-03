@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyRequestAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
 import { sendGmailMessage, GmailApiError } from "@/lib/server/gmailClient";
+import { enforceRateLimit, RateLimitExceededError } from "@/lib/server/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -54,6 +55,15 @@ export async function POST(request: NextRequest) {
     const status = err instanceof AuthVerificationError ? err.status : 401;
     const message = err instanceof Error ? err.message : "Authentication failed.";
     return NextResponse.json({ error: message }, { status });
+  }
+
+  try {
+    await enforceRateLimit(`invite-send:${uid}`, 30, 3600);
+  } catch (err) {
+    if (err instanceof RateLimitExceededError) {
+      return NextResponse.json({ error: err.message }, { status: 429 });
+    }
+    throw err;
   }
 
   let body: SendInviteEmailBody;
