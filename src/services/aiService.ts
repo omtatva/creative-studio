@@ -1,4 +1,5 @@
 import { doc, getDocs, query, serverTimestamp, setDoc, where } from "firebase/firestore";
+import { getCurrentUser } from "@/lib/firebase/auth";
 import { aiUsageLogsCol } from "@/lib/firebase/firestore";
 import { logActivity } from "@/services/activityService";
 import { getWorkspaceAIConfig } from "@/services/aiConfigService";
@@ -104,11 +105,16 @@ export async function runGeneration({ workspaceId, projectId, requestedBy, aiSet
     // back to the browser).
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 45_000);
+    // Server now requires sign-in (see the route's SECURITY doc
+    // comment — it previously had none at all) — attach the caller's
+    // own ID token, same pattern as billingService.ts's callBillingApi.
+    const currentUser = getCurrentUser();
+    const idToken = await currentUser?.getIdToken();
     let response: Response;
     try {
       response = await fetch("/api/ai-studio/generate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
         body: JSON.stringify({
           provider: aiSettings.provider,
           model: aiSettings.defaultModel,

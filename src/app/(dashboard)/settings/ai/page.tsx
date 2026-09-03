@@ -11,6 +11,7 @@ import { useWorkspaceSettings } from "@/hooks/useWorkspaceSettings";
 import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
+import { getCurrentUser } from "@/lib/firebase/auth";
 import { useToast } from "@/hooks/useToast";
 import { getWorkspaceAIConfig, saveWorkspaceAIKey, testWorkspaceAIConnection } from "@/services/aiConfigService";
 import { checkWorkspaceLimit } from "@/services/planService";
@@ -430,9 +431,12 @@ function OllamaConfigSection({ draft, setDraft, canManageWorkspace }: OllamaConf
     setIsTesting(true);
     setTestResult(null);
     try {
+      // Server now requires sign-in (see the route's SECURITY doc
+      // comment — it previously had none at all).
+      const idToken = await getCurrentUser()?.getIdToken();
       const response = await fetch("/api/settings/ai-key/test", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
         body: JSON.stringify({ provider: "ollama", baseUrl: draft.ollamaBaseUrl, model: draft.defaultModel }),
       });
       const data = await response.json().catch(() => ({}));

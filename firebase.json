@@ -4,6 +4,7 @@
     "indexes": "firebase-config/firestore.indexes.json"
   },
   "storage": {
+    "target": "rules",
     "rules": "firebase-config/storage.rules"
   },
   "apphosting": {

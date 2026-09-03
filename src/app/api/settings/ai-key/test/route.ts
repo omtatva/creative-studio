@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { verifyRequestAuth, AuthVerificationError } from "@/lib/server/firebaseAdmin";
 import { decryptSecret } from "@/lib/server/secretCrypto";
 import { generateNvidiaText, NvidiaApiError } from "@/lib/server/nvidiaClient";
 
@@ -24,8 +25,18 @@ interface TestRequestBody {
  *
  * For Ollama: there is no key to decrypt — it checks that the given
  * local server URL actually responds, with no auth involved at all.
+ *
+ * SECURITY: requires sign-in (verifyRequestAuth) — this had no auth
+ * check at all before.
  */
 export async function POST(request: NextRequest) {
+  try {
+    await verifyRequestAuth(request);
+  } catch (err) {
+    const status = err instanceof AuthVerificationError ? err.status : 401;
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Authentication failed." }, { status });
+  }
+
   let body: TestRequestBody;
   try {
     body = await request.json();

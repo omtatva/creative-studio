@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { verifyRequestAuth, AuthVerificationError } from "@/lib/server/firebaseAdmin";
 import { decryptSecret, type EncryptedSecret } from "@/lib/server/secretCrypto";
 import { generateNvidiaText, NvidiaApiError } from "@/lib/server/nvidiaClient";
 
@@ -39,8 +40,27 @@ const DEFAULT_MODEL_BY_PROVIDER = {
  * Ollama has no key at all — it's a free, local server (ollama.com)
  * this route calls directly at the workspace's configured URL
  * (default http://localhost:11434). Nothing about it is a secret.
+ *
+ * SECURITY: this route previously had NO authentication check at
+ * all — any anonymous caller could POST here and consume the
+ * server's own shared GEMINI_API_KEY/NVIDIA_API_KEY (the fallback
+ * used when no workspace key is supplied) for free, with no rate
+ * limit. verifyRequestAuth below closes that — every caller must be
+ * a real, currently-authenticated Firebase user. This does not (and
+ * doesn't need to) verify WHICH workspace's key is being used: a
+ * workspace's own encrypted key ciphertext is itself only ever
+ * readable by that workspace's members (Firestore rules on
+ * `settings/{workspaceId}`), so simply requiring sign-in is what
+ * closes the actual open door — full anonymous, unauthenticated use.
  */
 export async function POST(request: NextRequest) {
+  try {
+    await verifyRequestAuth(request);
+  } catch (err) {
+    const status = err instanceof AuthVerificationError ? err.status : 401;
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Authentication failed." }, { status });
+  }
+
   let body: GenerateRequestBody;
   try {
     body = await request.json();

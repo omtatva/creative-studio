@@ -94,11 +94,15 @@ export async function createWorkspace(
   const workspaceRef = doc(workspacesCol());
   const workspaceId = workspaceRef.id;
 
+  // Deliberately NOT uploaded yet — storage.rules' branding write rule
+  // requires real workspace membership (isWorkspaceAdmin), which can't
+  // exist before the workspaces/{id} and members/{id}_{ownerId} docs
+  // below are actually committed. Upload happens further down, right
+  // after the owner's membership doc succeeds; this starts as null and
+  // gets patched onto the already-created workspace doc afterward
+  // (settings/{id}, created after that point, picks up the real value
+  // directly — see below).
   let companyLogoUrl: string | null = null;
-  if (payload.companyLogoFile) {
-    const logoRef = workspaceLogoRef(workspaceId, payload.companyLogoFile.name);
-    companyLogoUrl = await uploadFile(logoRef, payload.companyLogoFile);
-  }
 
   /**
    * Firestore transactions report a permission rejection as ONE
@@ -218,6 +222,21 @@ export async function createWorkspace(
       } as never),
     () => deleteDoc(memberRef)
   );
+
+  // NOW authorized to upload branding (the owner's membership doc
+  // above just committed) — best-effort, deliberately NOT wrapped in
+  // attemptWrite's rollback: a logo that fails to upload should never
+  // undo an otherwise-successful workspace creation. The owner can
+  // just add it later from Settings > Workspace.
+  if (payload.companyLogoFile) {
+    try {
+      const logoRef = workspaceLogoRef(workspaceId, payload.companyLogoFile.name);
+      companyLogoUrl = await uploadFile(logoRef, payload.companyLogoFile);
+      await updateDoc(workspaceRef, { companyLogoUrl, updatedAt: serverTimestamp() } as never);
+    } catch (err) {
+      console.error("[workspaceService.createWorkspace] logo upload failed (workspace still created):", err);
+    }
+  }
 
   const settingsRef = settingsDoc(workspaceId);
   await attemptWrite(

@@ -3,6 +3,14 @@
     "default": "creative-studio-176c0",
     "creative-studio": "creative-studio-176c0"
   },
-  "targets": {},
+  "targets": {
+    "creative-studio-176c0": {
+      "storage": {
+        "rules": [
+          "creative-studio-176c0.firebasestorage.app"
+        ]
+      }
+    }
+  },
   "etags": {}
 }

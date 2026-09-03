@@ -1,4 +1,5 @@
 import { deleteDoc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import { getCurrentUser } from "@/lib/firebase/auth";
 import { aiConfigDoc } from "@/lib/firebase/firestore";
 import { WorkspaceAIConfig } from "@/types/aiConfig.types";
 import { AIProvider } from "@/types/settings.types";
@@ -26,9 +27,12 @@ export async function saveWorkspaceAIKey(workspaceId: string, provider: AIProvid
   const trimmed = apiKey.trim();
   if (!trimmed) throw new Error("API key is required.");
 
+  // Server now requires sign-in (see the route's SECURITY doc comment
+  // — it previously had none at all).
+  const idToken = await getCurrentUser()?.getIdToken();
   const response = await fetch("/api/settings/ai-key/encrypt", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
     body: JSON.stringify({ apiKey: trimmed }),
   });
   const data = await response.json().catch(() => ({}));
@@ -60,9 +64,12 @@ export async function testWorkspaceAIConnection(workspaceId: string, provider: A
     return { ok: false, error: "No API key configured for this workspace yet." };
   }
   try {
+    // Server now requires sign-in (see the route's SECURITY doc
+    // comment — it previously had none at all).
+    const idToken = await getCurrentUser()?.getIdToken();
     const response = await fetch("/api/settings/ai-key/test", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
       body: JSON.stringify({ provider, ciphertext: config.ciphertext, iv: config.iv, authTag: config.authTag }),
     });
     const data = await response.json().catch(() => ({}));

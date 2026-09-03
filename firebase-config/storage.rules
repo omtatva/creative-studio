@@ -1,24 +1,57 @@
 rules_version = '2';
 
-// Mirrors the Firestore tenancy model: every object lives under
-// workspaces/{workspaceId}/... Historically every sub-path here has
-// shared one blanket "any signed-in user" rule, which is loose but
-// matched Firestore's own (equally loose, now tightened) posture at
-// the time.
+// SECURITY MODEL (see the security-hardening audit for the full trace
+// of every Storage path against the actual upload/download code in
+// lib/firebase/storage.ts — nothing here is guessed):
 //
-// `branding/**` is the one sub-path tightened here to real per-
-// workspace access, matching the Settings > Branding logo feature:
-// only members of THAT workspace may read a workspace's branding
-// assets, and only that workspace's owner/admin (or the platform
-// Super Admin — see firestore.rules' isSuperAdmin(), same
-// platformRole-field check) may write them. Everything else keeps its
-// existing behavior unchanged — this is deliberately a single match
-// block with the resource-type segment captured as a variable
-// (`resourceType`) and branched on inline, NOT two overlapping
-// `match` blocks, because Storage (like Firestore) rules do not
-// "more-specific-wins" across independently declared sibling
-// matches — a broad catch-all matching the same path would otherwise
-// silently coexist with a tighter one via OR, undermining it.
+//   workspaces/{workspaceId}/branding/**                — workspace-level.
+//     read:  any member of that workspace, or Super Admin.
+//     write: that workspace's owner/admin, or Super Admin.
+//
+//   workspaces/{workspaceId}/projects/{projectId}/**     — project-level
+//   (covers Project Files/Creative Workspace assets AND cover images —
+//   see projectFileRef/projectAssetRef/projectAssetThumbRef/projectCoverRef
+//   in lib/firebase/storage.ts, which all share this exact prefix).
+//     Every check verifies BOTH facts explicitly, never just one:
+//       (a) `projectId` in the path really belongs to `workspaceId` in
+//           the path — resolved from the projects/{projectId} Firestore
+//           doc's own `workspaceId` field, not trusted from the path
+//           alone.
+//       (b) the caller is actually authorized for that project — a
+//           project_members/{projectId}_{uid} record (any role for
+//           read; anything but 'viewer' for write), OR that workspace's
+//           owner/admin (who can reach every project in their own
+//           workspace, same as Firestore's canAccessProject), OR
+//           Super Admin.
+//
+//   workspaces/{workspaceId}/tasks/{taskId}/attachments/** — resolves
+//   taskId -> its real projectId/workspaceId via the tasks/{taskId}
+//   Firestore doc (the path itself has no projectId segment), then
+//   applies the exact same project-level check as above. The task's
+//   OWN workspaceId is cross-checked against the path's workspaceId so
+//   a path can't claim a workspace a task doesn't actually belong to.
+//
+//   workspaces/{workspaceId}/files/**                    — workspace-
+//   wide files (workspaceFileRef in storage.ts — not currently called
+//   anywhere in the app, but locked to real workspace membership
+//   rather than left open, in case something starts using it).
+//
+//   Everything else under workspaces/{workspaceId}/** that doesn't
+//   match one of the shapes above, and everything outside
+//   workspaces/**, is denied — there is no catch-all "any signed-in
+//   user" fallback anywhere in this file.
+//
+// One deliberate design choice: this is ONE match block per top-level
+// resource type (branding / projects / tasks / files), not nested
+// sibling matches for sub-shapes within them — Cloud Storage evaluates
+// EVERY matching `match` block for a path and allows the request if
+// ANY of them says yes (no "most specific wins" the way Firestore
+// mostly behaves for exact paths). Two overlapping match blocks for
+// the same object, one strict and one loose, would let the loose one
+// silently reopen whatever the strict one just closed. That is
+// literally the bug this rewrite fixes (see the old broad
+// `{resourceType}/{allPaths=**}` block below, once a single rule for
+// every non-branding path).
 
 service firebase.storage {
   match /b/{bucket}/o {
@@ -27,9 +60,15 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    // Same check as firestore.rules' isSuperAdmin() — see that
-    // function's doc comment for why this is an OR of the token-claim
-    // check and the `platformRole` field, not just the field alone.
+    // Same trust chain as firestore.rules' isSuperAdmin(): the
+    // `platformRole` field on the caller's own Firestore user doc
+    // (only firebase-admin can ever write it), OR — since Storage
+    // rules and application code deploy on independent schedules —
+    // the caller's own server-verified ID token email/email_verified
+    // claims matching the one designated Super Admin account. Neither
+    // half is a client-supplied value: token claims come from
+    // Firebase's own signed ID token, and `platformRole` is write-
+    // protected by firestore.rules' users/{uid} block.
     function isSuperAdmin() {
       return isSignedIn()
         && (
@@ -52,13 +91,162 @@ service firebase.storage {
       return isWorkspaceMember(workspaceId) && workspaceMemberRole(workspaceId) in ['owner', 'admin'];
     }
 
-    match /workspaces/{workspaceId}/{resourceType}/{allPaths=**} {
-      allow read: if resourceType == 'branding'
-        ? (isWorkspaceMember(workspaceId) || isSuperAdmin())
-        : isSignedIn();
-      allow write: if resourceType == 'branding'
-        ? (isWorkspaceAdmin(workspaceId) || isSuperAdmin())
-        : isSignedIn();
+    // Mirrors firestore.rules' isProjectMember/projectMemberRole
+    // exactly — same collection, same doc-id shape
+    // (project_members/{projectId}_{uid}), same role field. Never a
+    // second, competing membership model.
+    function isProjectMember(projectId) {
+      return isSignedIn() &&
+        firestore.exists(/databases/(default)/documents/project_members/$(projectId + '_' + request.auth.uid));
+    }
+
+    function projectMemberRole(projectId) {
+      return firestore.get(/databases/(default)/documents/project_members/$(projectId + '_' + request.auth.uid)).data.role;
+    }
+
+    // Resolves the project's OWN real workspaceId (never trusted from
+    // the request path) and compares it to the workspaceId actually in
+    // the path — this is the explicit "the project belongs to the
+    // requested workspace" check, kept as its own function so both
+    // canAccessProjectFiles and canWriteProjectFiles apply it the same
+    // way.
+    function projectBelongsToWorkspace(workspaceId, projectId) {
+      return firestore.get(/databases/(default)/documents/projects/$(projectId)).data.workspaceId == workspaceId;
+    }
+
+    // Read: any role (including viewer) — matches firestore.rules'
+    // canAccessProject exactly (workspace owner/admin, or Super Admin,
+    // or an explicit project_members record of any role).
+    function canAccessProjectFiles(workspaceId, projectId) {
+      return isSuperAdmin()
+        || isWorkspaceAdmin(workspaceId)
+        || (projectBelongsToWorkspace(workspaceId, projectId) && isProjectMember(projectId));
+    }
+
+    // Write (upload/overwrite/delete): excludes 'viewer' — matches
+    // firestore.rules' canWriteProject exactly.
+    function canWriteProjectFiles(workspaceId, projectId) {
+      return isSuperAdmin()
+        || isWorkspaceAdmin(workspaceId)
+        || (projectBelongsToWorkspace(workspaceId, projectId)
+            && isProjectMember(projectId)
+            && projectMemberRole(projectId) != 'viewer');
+    }
+
+    // Task attachments have no projectId segment in their own path
+    // (workspaces/{workspaceId}/tasks/{taskId}/attachments/**) — this
+    // resolves taskId to its real workspaceId/projectId via the
+    // tasks/{taskId} Firestore doc (one read, reused for both fields),
+    // and cross-checks the task's real workspaceId against the path's
+    // own workspaceId so a path can't claim a workspace a task never
+    // actually belonged to.
+    function taskAllowsAccess(workspaceId, taskId) {
+      let task = firestore.get(/databases/(default)/documents/tasks/$(taskId)).data;
+      return task.workspaceId == workspaceId && canAccessProjectFiles(workspaceId, task.projectId);
+    }
+
+    function taskAllowsWrite(workspaceId, taskId) {
+      let task = firestore.get(/databases/(default)/documents/tasks/$(taskId)).data;
+      return task.workspaceId == workspaceId && canWriteProjectFiles(workspaceId, task.projectId);
+    }
+
+    // Content-type/size allow-lists mirror the app's OWN existing
+    // client-side validation exactly (see
+    // lib/constants/creativeFiles.ts's SUPPORTED_CREATIVE_MIME_TYPES/
+    // MAX_UPLOAD_SIZE_BYTES and brandingService.ts's
+    // ALLOWED_IMAGE_TYPES/MAX_BRANDING_IMAGE_BYTES) — real enforcement
+    // of limits already established client-side, not new, narrower
+    // ones invented here that could reject something the app itself
+    // already accepts. A missing/generic content type (some browsers
+    // report none for .mov, matching creativeFiles.ts's own extension-
+    // fallback comment) is let through on content-type alone — Storage
+    // Rules re-validating the filename's extension too would need
+    // string parsing this file intentionally avoids getting wrong in
+    // a way that could reject real uploads; that residual gap is
+    // disclosed in the audit report, not hidden.
+    function isAllowedBrandingUpload() {
+      return request.resource.contentType in
+          ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml', 'image/gif']
+        && request.resource.size < 5 * 1024 * 1024;
+    }
+
+    function isAllowedCoverUpload() {
+      return (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/octet-stream')
+        && request.resource.size < 10 * 1024 * 1024;
+    }
+
+    // cover-{fileName} (projectCoverRef) and files/{fileId}/{fileName}
+    // (projectFileRef/projectAssetRef) share the SAME
+    // projects/{projectId}/ prefix — wildcards match a whole path
+    // segment, not a partial-string prefix, so "cover-" vs "files" is
+    // distinguished by inspecting the captured segment list itself
+    // (allPaths[0]) inside ONE match block, rather than two separate
+    // match blocks for the same subtree (which would OR together —
+    // see this file's header comment on why that's the exact bug this
+    // rewrite fixes).
+    function isProjectCoverUpload(allPaths) {
+      return allPaths.size() > 0 && allPaths[0].matches('cover-.*');
+    }
+
+    function isValidProjectUpload(allPaths) {
+      return isProjectCoverUpload(allPaths) ? isAllowedCoverUpload() : isAllowedCreativeUpload();
+    }
+
+    function isAllowedCreativeUpload() {
+      return (
+          request.resource.contentType in [
+            'video/mp4', 'video/quicktime', 'video/webm',
+            'image/jpeg', 'image/png', 'image/svg+xml', 'image/gif',
+            'application/pdf',
+            'audio/mpeg', 'audio/wav', 'audio/x-wav'
+          ]
+          || request.resource.contentType == 'application/octet-stream'
+          || request.resource.contentType == ''
+        )
+        && request.resource.size < 500 * 1024 * 1024;
+    }
+
+    // Task attachments have no established client-side type allow-list
+    // (attachmentService.ts accepts anything) — rather than invent a
+    // narrow list that could reject a real, previously-fine upload,
+    // this blocks the specific dangerous/executable categories the
+    // audit called out and keeps the same 500 MB ceiling used
+    // elsewhere in the app.
+    function isSafeAttachmentUpload() {
+      return !(request.resource.contentType in [
+          'application/x-msdownload', 'application/x-msdos-program', 'application/x-executable',
+          'application/x-sh', 'application/x-bat', 'application/bat',
+          'application/x-msi', 'application/vnd.microsoft.portable-executable',
+          'application/java-archive', 'application/x-elf'
+        ])
+        && request.resource.size < 500 * 1024 * 1024;
+    }
+
+    match /workspaces/{workspaceId}/branding/{allPaths=**} {
+      allow read: if isWorkspaceMember(workspaceId) || isSuperAdmin();
+      allow create, update: if (isWorkspaceAdmin(workspaceId) || isSuperAdmin()) && isAllowedBrandingUpload();
+      allow delete: if isWorkspaceAdmin(workspaceId) || isSuperAdmin();
+    }
+
+    // Covers BOTH shapes under this one prefix: cover-{fileName}
+    // (projectCoverRef) and files/{fileId}/{fileName} or
+    // files/{timestamp}-{fileName} (projectFileRef/projectAssetRef/
+    // projectAssetThumbRef) — see isValidProjectUpload above for why
+    // this is one match block, not two.
+    match /workspaces/{workspaceId}/projects/{projectId}/{allPaths=**} {
+      allow read: if canAccessProjectFiles(workspaceId, projectId);
+      allow create, update: if canWriteProjectFiles(workspaceId, projectId) && isValidProjectUpload(allPaths);
+      allow delete: if canWriteProjectFiles(workspaceId, projectId);
+    }
+
+    match /workspaces/{workspaceId}/tasks/{taskId}/attachments/{allPaths=**} {
+      allow read: if taskAllowsAccess(workspaceId, taskId);
+      allow create, update: if taskAllowsWrite(workspaceId, taskId) && isSafeAttachmentUpload();
+      allow delete: if taskAllowsWrite(workspaceId, taskId);
+    }
+
+    match /workspaces/{workspaceId}/files/{allPaths=**} {
+      allow read, write: if isWorkspaceMember(workspaceId) || isSuperAdmin();
     }
   }
 }

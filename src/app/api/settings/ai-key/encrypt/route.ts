@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { verifyRequestAuth, AuthVerificationError } from "@/lib/server/firebaseAdmin";
 import { encryptSecret } from "@/lib/server/secretCrypto";
 
 export const runtime = "nodejs";
@@ -16,8 +17,19 @@ interface EncryptRequestBody {
  * that ciphertext to Firestore itself (see aiConfigService.ts); this
  * route never touches Firestore, keeping it a pure, auditable crypto
  * boundary.
+ *
+ * SECURITY: requires sign-in (verifyRequestAuth) — this had no auth
+ * check at all before, letting anyone use the server as a free
+ * encryption oracle for arbitrary text.
  */
 export async function POST(request: NextRequest) {
+  try {
+    await verifyRequestAuth(request);
+  } catch (err) {
+    const status = err instanceof AuthVerificationError ? err.status : 401;
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Authentication failed." }, { status });
+  }
+
   let body: EncryptRequestBody;
   try {
     body = await request.json();
