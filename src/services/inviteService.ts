@@ -1,8 +1,8 @@
-import { doc, getDoc, getDocs, orderBy, query, serverTimestamp, setDoc, updateDoc, where, writeBatch } from "firebase/firestore";
-import { auth, db } from "@/lib/firebase/config";
-import { workspaceInvitesCol, workspaceInviteDoc, memberDoc, userDoc } from "@/lib/firebase/firestore";
+import { doc, getDoc, getDocs, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
+import { auth } from "@/lib/firebase/config";
+import { workspaceInvitesCol, workspaceInviteDoc } from "@/lib/firebase/firestore";
 import { logActivity } from "@/services/activityService";
-import { WorkspaceInvite, Member } from "@/types/workspace.types";
+import { WorkspaceInvite } from "@/types/workspace.types";
 import { MemberRole } from "@/types/workspace.types";
 import { TaskActor } from "@/types/task.types";
 
@@ -143,48 +143,43 @@ export async function resendInvite(inviteId: string): Promise<string> {
   return expiresAt;
 }
 
+export class MemberQuotaError extends Error {
+  code: "MEMBER_LIMIT_REACHED";
+  constructor(message: string) {
+    super(message);
+    this.code = "MEMBER_LIMIT_REACHED";
+  }
+}
+
 /**
- * Accepts a pending invite addressed to the caller's own email:
- * creates their `members/{workspaceId}_{uid}` doc (the write Firestore
- * rules only allow because `sourceInviteId` points at a real, pending,
- * matching-email invite — see firestore.rules), flips the invite to
- * "accepted", and marks the user's own profile onboarded — all in the
- * same batch so every write succeeds or fails together. Without that
- * last write, `onboardingComplete` (see AppUser in user.types.ts) was
- * ONLY ever set true by workspaceService.createWorkspace's owner path —
- * an invited member joining an EXISTING workspace never triggered it,
- * so Super Admin > Users would show every invited teammate as
- * permanently "Pending" no matter how long they'd actually been active.
+ * Accepts a pending invite addressed to the caller's own email. Now
+ * goes through /api/invites/accept (server, Admin SDK) instead of a
+ * client writeBatch — that's the ONLY place maxMembers can be checked
+ * atomically (Firestore rules have no aggregate-count primitive, and
+ * a client-side check-then-write has a race two concurrent
+ * acceptances could both slip through). firestore.rules' `members`
+ * create rule no longer has an invite-accept branch at all, so a
+ * client calling the Firestore SDK directly for this can't succeed
+ * regardless.
+ *
+ * Still marks the user's own profile onboarded server-side (see the
+ * route) — same fix as before for Super Admin > Users showing every
+ * invited teammate as permanently "Pending."
  */
 export async function acceptInvite(invite: WorkspaceInvite, actor: TaskActor): Promise<void> {
-  const batch = writeBatch(db);
+  const idToken = await auth.currentUser?.getIdToken();
+  if (!idToken) throw new Error("You must be signed in.");
 
-  const member: Omit<Member, "createdAt" | "updatedAt"> = {
-    id: `${invite.workspaceId}_${actor.uid}`,
-    workspaceId: invite.workspaceId,
-    userId: actor.uid,
-    role: invite.role,
-    email: actor.email,
-    displayName: actor.displayName,
-    photoURL: actor.photoURL,
-    status: "active",
-    sourceInviteId: invite.id,
-  };
-  batch.set(memberDoc(invite.workspaceId, actor.uid), {
-    ...member,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  } as never);
-
-  batch.update(workspaceInviteDoc(invite.id), {
-    status: "accepted",
-    acceptedAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+  const response = await fetch("/api/invites/accept", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ inviteId: invite.id, displayName: actor.displayName, photoURL: actor.photoURL }),
   });
-
-  batch.set(userDoc(actor.uid), { onboardingComplete: true, updatedAt: serverTimestamp() } as never, { merge: true });
-
-  await batch.commit();
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (data?.code === "MEMBER_LIMIT_REACHED") throw new MemberQuotaError(data.error);
+    throw new Error(typeof data?.error === "string" ? data.error : "Couldn't accept this invitation.");
+  }
 
   await logActivity(invite.workspaceId, {
     actorId: actor.uid,

@@ -126,21 +126,25 @@ export async function checkWorkspaceLimit(workspace: Workspace, metric: Workspac
  * plans can change shape later without hunting down scattered string
  * comparisons.
  *
- * IMPORTANT, disclosed limitation (Security audit, Section 28 —
- * "entitlement enforcement MUST be server-side"): all three are
- * CLIENT-SIDE pre-flight checks only. `firestore.rules` does NOT
- * enforce maxMembers/maxProjects — Firestore security rules have no
- * primitive for "count how many documents already match X" during a
- * create rule, so a true atomic limit would need either a maintained
- * counter field updated transactionally on every create/delete, or
- * routing member/project creation through a server API route with an
- * Admin SDK `.count()` check (the pattern already used in
- * /api/billing/change-plan for exactly this reason). Neither exists
- * yet — a determined client that skips calling checkWorkspaceLimit
- * directly via the Firestore SDK CAN currently exceed a plan's
- * member/project limit. This is a real, unresolved gap, not
- * "unbypassable" as an earlier version of this comment incorrectly
- * claimed — see the security report's residual-risk list.
+ * UPDATE (workspace-quota security pass — see workspaceQuota.ts):
+ * these three are still CLIENT-SIDE pre-flight checks only, and
+ * `firestore.rules` still does NOT enforce maxMembers/maxProjects
+ * directly (Firestore rules have no primitive for "count how many
+ * documents already match X" during a create rule). That gap is now
+ * closed a different way, not by this function: project creation
+ * (`POST /api/projects/create`), project restore
+ * (`POST /api/projects/restore`), and invitation acceptance
+ * (`POST /api/invites/accept`) all resolve the LIVE entitlement and
+ * reserve a slot against a maintained, transactionally-updated
+ * counter (`workspaces/{id}.projectCount`/`.memberCount`) server-side,
+ * via the Admin SDK — see workspaceQuota.ts's `reserveSlot`. A client
+ * that skips calling `checkWorkspaceLimit` and hits those routes
+ * directly (or the Firestore SDK directly, which can no longer create
+ * a project or membership doc at all — see firestore.rules) can no
+ * longer exceed a plan's member/project limit, including in a
+ * simultaneous-final-slot race. This function and `checkWorkspaceLimit`
+ * remain useful as a fast, no-network pre-flight UI check; they are
+ * not, and never were, the actual security boundary.
  */
 export function getWorkspaceEntitlements(workspace: Workspace): WorkspacePlanLimits {
   return workspace.limits;

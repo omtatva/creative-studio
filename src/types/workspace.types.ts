@@ -61,6 +61,17 @@ export interface Workspace extends Timestamps {
   pendingPlan: WorkspacePlan | null;
   timezone: string;
   defaultLanguage: string;
+  /**
+   * Authoritative counters for server-side maxProjects/maxMembers
+   * enforcement — see lib/server/workspaceQuota.ts. Admin-SDK-write-
+   * only (firestore.rules' workspaces/{id} update rule explicitly
+   * excludes both from client writes). Optional because existing
+   * workspaces created before this existed don't have them yet — they
+   * self-heal via a lazy backfill the first time either is checked,
+   * never a forced migration.
+   */
+  projectCount?: number;
+  memberCount?: number;
 }
 
 export type MemberRole = "owner" | "admin" | "member" | "viewer";

@@ -47,26 +47,6 @@ service cloud.firestore {
       return isWorkspaceMember(workspaceId) && memberRole(workspaceId) in roles;
     }
 
-    // Backs the "accept invite" membership-create path below: proves a
-    // brand-new membership doc corresponds to a real, still-pending
-    // invite addressed to the caller's own VERIFIED auth email (not
-    // anything the client merely claims), for exactly the role that
-    // invite grants — so a user can only ever join via an invite that
-    // was actually sent to them.
-    function isPendingInviteMatch(inviteId, data) {
-      let invite = get(/databases/$(database)/documents/workspace_invites/$(inviteId)).data;
-      return invite.workspaceId == data.workspaceId
-        && invite.email == request.auth.token.email
-        && invite.role == data.role
-        && invite.status == 'pending';
-    }
-
-    function isValidInviteAccept(data) {
-      return ('sourceInviteId' in data)
-        && data.sourceInviteId is string
-        && isPendingInviteMatch(data.sourceInviteId, data);
-    }
-
     // The platform's Super Admin — a PLATFORM-LEVEL role, completely
     // separate from any workspace's owner/admin (see the two-level
     // administration model in lib/constants/itSupport.ts). TRUE if
@@ -256,7 +236,17 @@ service cloud.firestore {
       // workspace they don't personally belong to. Still real deletion
       // (see deleteWorkspaceAccess in workspaceService.ts), not
       // frontend-hidden — this is the actual enforcement.
-      allow update: if isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin']);
+      // SECURITY (workspace-quota audit): projectCount/memberCount are
+      // the authoritative counters /api/projects/* and
+      // /api/invites/accept check atomically before allowing a create
+      // — without this exclusion, an owner/admin could just set them
+      // to 0 directly (this rule otherwise allows any field change)
+      // and defeat the entire mechanism. Admin-SDK-write-only for
+      // these two fields specifically; every other field (name, logo,
+      // limits, ...) is unaffected — unchanged from before.
+      allow update: if isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin'])
+        && request.resource.data.get('projectCount', null) == resource.data.get('projectCount', null)
+        && request.resource.data.get('memberCount', null) == resource.data.get('memberCount', null);
       allow delete: if isWorkspaceOwner(workspaceId) || isSuperAdmin();
 
       match /activity_logs/{logId} {
@@ -346,6 +336,20 @@ service cloud.firestore {
       allow write: if isSuperAdmin();
     }
 
+    // Super Admin > Platform Settings — see PlatformSettings' doc
+    // comment in platformSettings.types.ts. Read is any signed-in user
+    // (not Super-Admin-only, unlike platform_config's write side): the
+    // maintenance-mode flag has to be readable by every account so the
+    // authenticated app shell can gate on it for everyone, not just the
+    // Super Admin viewing this page. Write is admin-SDK-only — every
+    // change goes through POST /api/platform-settings/update
+    // (verifySuperAdminAuth) so it can be audit-logged in the same
+    // step, never a direct client Firestore write.
+    match /platform_settings/{docId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
     match /members/{memberId} {
       allow read: if isSignedIn();
 
@@ -368,17 +372,25 @@ service cloud.firestore {
       // user. A normal member can never satisfy all three for a
       // workspace they don't own.
       //
-      // A second path exists below for INVITE ACCEPT — a signed-in
-      // user creating their OWN membership (never someone else's) by
-      // accepting a real pending invite addressed to them. See
-      // isValidInviteAccept above.
+      // SECURITY (workspace-quota audit): the INVITE-ACCEPT path that
+      // used to live here (a signed-in user creating their OWN
+      // membership by accepting a real pending invite, verified via
+      // isValidInviteAccept) is now server-only — see
+      // /api/invites/accept. Firestore rules have no aggregate-count
+      // primitive, so nothing here could ever enforce maxMembers; the
+      // server route re-verifies the exact same invite-validity bar
+      // (workspace/role/status/email match) via the Admin SDK, PLUS
+      // the atomic quota check this rule never could. The OWNER
+      // BOOTSTRAP path below is untouched — a brand-new workspace's
+      // very first member is always exactly one, never a quota
+      // concern, and still needs to work via a direct client write
+      // (see workspaceService.createWorkspace, which writes
+      // workspaces/{id} BEFORE members/{id}, sequentially, so this
+      // get() sees committed data, not an in-flight write).
       allow create: if isSignedIn()
         && request.resource.data.userId == request.auth.uid
-        && (
-          (request.resource.data.role == 'owner'
-            && get(/databases/$(database)/documents/workspaces/$(request.resource.data.workspaceId)).data.ownerId == request.auth.uid)
-          || (request.resource.data.role != 'owner' && isValidInviteAccept(request.resource.data))
-        );
+        && request.resource.data.role == 'owner'
+        && get(/databases/$(database)/documents/workspaces/$(request.resource.data.workspaceId)).data.ownerId == request.auth.uid;
 
       // Admin can manage (change role, remove) any member EXCEPT the
       // owner's own doc, and can never grant/hold the 'owner' role
@@ -447,12 +459,24 @@ service cloud.firestore {
     // workspace-level owner/admin, or Super Admin).
     match /projects/{projectId} {
       allow read: if canAccessProject(resource.data.workspaceId, projectId);
-      // Restricted to owner/admin/member — a viewer can see projects
-      // but not create them. (No "manager" role exists in this app's
-      // model; using the real MemberRole enum rather than inventing one.)
-      allow create: if isWorkspaceMemberWithRole(request.resource.data.workspaceId, ['owner', 'admin', 'member']);
+      // SECURITY (workspace-quota audit): creation moved server-only —
+      // see /api/projects/create. Firestore rules have no aggregate-
+      // count primitive, so nothing here could ever enforce
+      // maxProjects; a client-side pre-check alone (the old rule below,
+      // kept in this comment for context: `isWorkspaceMemberWithRole(
+      // request.resource.data.workspaceId, ['owner','admin','member'])`)
+      // could always be bypassed by calling the Firestore SDK directly.
+      // The server route re-verifies that SAME role bar via the Admin
+      // SDK before ever reserving a slot or writing the document.
+      allow create: if false;
+      // Un-archiving (isArchived true->false) is ALSO server-only now
+      // (see /api/projects/restore) — it increases the active count,
+      // the same threat class as creation, for the same reason.
+      // Archiving (false->true) and every other field update are
+      // unaffected.
       allow update: if canManageProject(resource.data.workspaceId, projectId)
-        && request.resource.data.workspaceId == resource.data.workspaceId;
+        && request.resource.data.workspaceId == resource.data.workspaceId
+        && !(resource.data.isArchived == true && request.resource.data.isArchived == false);
       allow delete: if canManageProject(resource.data.workspaceId, projectId);
     }
 

@@ -1,6 +1,7 @@
 import { deleteDoc, getDoc, getDocs, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import { memberDoc, membersCol } from "@/lib/firebase/firestore";
 import { logActivity } from "@/services/activityService";
+import { getCurrentUser } from "@/lib/firebase/auth";
 import { Member, MemberRole } from "@/types/workspace.types";
 import { TaskActor } from "@/types/task.types";
 
@@ -62,4 +63,24 @@ export async function removeMember(workspaceId: string, uid: string, actor: Task
     targetType: "member",
     targetId: uid,
   });
+  // Removal frees a member slot — resync (never a blind decrement,
+  // see workspaceQuota.ts's doc comment) so the next invite acceptance
+  // sees accurate capacity. Fire-and-forget: the removal itself
+  // already succeeded above regardless of whether this does.
+  void resyncMemberCount(workspaceId);
+}
+
+async function resyncMemberCount(workspaceId: string): Promise<void> {
+  try {
+    const currentUser = getCurrentUser();
+    if (!currentUser) return;
+    const idToken = await currentUser.getIdToken();
+    await fetch("/api/workspaces/resync-count", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+      body: JSON.stringify({ workspaceId, metric: "member" }),
+    });
+  } catch (err) {
+    console.error("[userService] member-count resync failed (non-fatal):", err);
+  }
 }

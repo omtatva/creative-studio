@@ -2,7 +2,6 @@ import {
   arrayRemove,
   arrayUnion,
   deleteDoc,
-  doc,
   getDoc,
   getDocs,
   limit as fbLimit,
@@ -14,6 +13,7 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
+import { getCurrentUser } from "@/lib/firebase/auth";
 import { projectsCol, projectDoc, projectMembersCol, projectMemberDoc } from "@/lib/firebase/firestore";
 import { deleteFile, projectCoverRef, uploadFile } from "@/lib/firebase/storage";
 import { logActivity } from "@/services/activityService";
@@ -25,6 +25,37 @@ import {
   ProjectMembership,
   UpdateProjectPayload,
 } from "@/types/project.types";
+
+export class ProjectQuotaError extends Error {
+  code: "PROJECT_LIMIT_REACHED";
+  constructor(message: string) {
+    super(message);
+    this.code = "PROJECT_LIMIT_REACHED";
+  }
+}
+
+/**
+ * Calls a /api/projects/* route with the caller's own ID token — see
+ * that route's doc comment for what moved server-side and why
+ * (maxProjects can't be enforced atomically from the client SDK at
+ * all; Firestore rules have no aggregate-count primitive).
+ */
+async function callProjectApi<T>(path: string, body: unknown): Promise<T> {
+  const user = getCurrentUser();
+  if (!user) throw new Error("You must be signed in.");
+  const idToken = await user.getIdToken();
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (data?.code === "PROJECT_LIMIT_REACHED") throw new ProjectQuotaError(data.error);
+    throw new Error(typeof data?.error === "string" ? data.error : "Request failed.");
+  }
+  return data as T;
+}
 
 /**
  * Writes/updates the REAL access-control record for one project
@@ -77,89 +108,51 @@ interface CreateProjectArgs {
 }
 
 export async function createProject({ workspaceId, owner, payload }: CreateProjectArgs): Promise<string> {
-  const projectRef = doc(projectsCol());
-  const projectId = projectRef.id;
-
-  // STEP 5: isolate the Storage upload from the Firestore write — if
-  // this throws, the error is attributable to the cover image upload,
-  // not the project document itself, and we never reach setDoc().
-  let coverImageUrl: string | null = null;
-  if (payload.coverImageFile) {
-    try {
-      const coverRef = projectCoverRef(workspaceId, projectId, payload.coverImageFile.name);
-      coverImageUrl = await uploadFile(coverRef, payload.coverImageFile);
-    } catch (err) {
-      console.error("[projectService.createProject] cover image upload failed:", err);
-      throw new Error(
-        `Cover image upload failed: ${(err as { message?: string })?.message ?? "unknown storage error"}`
-      );
-    }
-  }
-
-  const project: Omit<Project, "createdAt" | "updatedAt"> = {
-    id: projectId,
+  // The actual project document is now created server-side (see
+  // /api/projects/create) — the ONLY place maxProjects can be checked
+  // atomically. Everything below (cover upload, project_members,
+  // activity log, default stage) is unchanged, best-effort follow-up
+  // work using the projectId the server just created.
+  const { projectId } = await callProjectApi<{ projectId: string }>("/api/projects/create", {
     workspaceId,
     name: payload.name,
     description: payload.description,
-    coverImageUrl,
     color: payload.color,
     icon: payload.icon,
     statusId: payload.statusId,
     priorityId: payload.priorityId,
     startDate: payload.startDate,
     dueDate: payload.dueDate,
-    ownerId: owner.uid,
-    members: [owner],
     tags: payload.tags,
-    progress: 0,
-    isArchived: false,
-    archivedAt: null,
-    favoritedBy: [],
-    pinnedBy: [],
-    createdBy: owner.uid,
-  };
-
-  // STEP 6: Firestore rejects `undefined` field values outright — strip
-  // any that slipped through (e.g. an unresolved form field) instead of
-  // letting setDoc() throw an opaque "invalid data" error, and log the
-  // exact payload being written so a bad value is visible immediately.
-  const sanitizedProject = Object.fromEntries(
-    Object.entries(project).filter(([, value]) => value !== undefined)
-  ) as Omit<Project, "createdAt" | "updatedAt">;
-  const droppedFields = Object.keys(project).filter((key) => (project as Record<string, unknown>)[key] === undefined);
-  if (droppedFields.length > 0) {
-    console.warn("[projectService.createProject] dropped undefined fields before write:", droppedFields);
-  }
-
-  console.log("[projectService.createProject] writing to path:", projectRef.path);
-  console.log("[projectService.createProject] payload:", sanitizedProject);
-  console.log("[projectService.createProject] workspaceId:", workspaceId, "ownerId:", owner.uid);
-
-  try {
-    await setDoc(projectRef, {
-      ...sanitizedProject,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-  } catch (err) {
-    const firebaseErr = err as { code?: string; message?: string; stack?: string };
-    console.error("[projectService.createProject] Firestore write FAILED:", err);
-    console.error("[projectService.createProject] error.code:", firebaseErr?.code);
-    console.error("[projectService.createProject] error.message:", firebaseErr?.message);
-    console.error("[projectService.createProject] error.stack:", firebaseErr?.stack);
-    throw err;
-  }
-
-  console.log("[projectService.createProject] Firestore write SUCCEEDED:", projectId);
+    ownerDisplayName: owner.displayName,
+    ownerPhotoURL: owner.photoURL,
+    ownerEmail: owner.email,
+  });
 
   try {
     // The creator becomes a real, queryable project member — NOT
     // every workspace member (see ProjectMembership's doc comment) —
     // so they can immediately see/open the project they just made
-    // under the new membership-filtered visibility model.
+    // under the new membership-filtered visibility model. Done BEFORE
+    // the cover upload below: a non-admin "member"-role creator's
+    // Storage write is only authorized once this record exists (see
+    // storage.rules' canWriteProjectFiles), so uploading first would
+    // fail for exactly that role.
     await upsertProjectMembership({ projectId, workspaceId, uid: owner.uid, role: "owner", addedBy: owner.uid });
   } catch (err) {
     console.error("[projectService.createProject] owner project_members write failed (project was still created):", err);
+  }
+
+  if (payload.coverImageFile) {
+    try {
+      const coverRef = projectCoverRef(workspaceId, projectId, payload.coverImageFile.name);
+      const coverImageUrl = await uploadFile(coverRef, payload.coverImageFile);
+      await updateDoc(projectDoc(projectId), { coverImageUrl, updatedAt: serverTimestamp() });
+    } catch (err) {
+      // The project already exists at this point — a cover-image
+      // failure must not be reported as the whole creation failing.
+      console.error("[projectService.createProject] cover image upload failed (project was still created):", err);
+    }
   }
 
   try {
@@ -230,6 +223,15 @@ export async function updateProject(
   } as never);
 }
 
+/** Best-effort — see /api/workspaces/resync-count's doc comment for why this is an absolute resync, not a decrement, and why it's safe to fire-and-forget. */
+async function resyncProjectCount(workspaceId: string): Promise<void> {
+  try {
+    await callProjectApi("/api/workspaces/resync-count", { workspaceId, metric: "project" });
+  } catch (err) {
+    console.error("[projectService] project-count resync failed (non-fatal):", err);
+  }
+}
+
 export async function archiveProject(workspaceId: string, projectId: string): Promise<void> {
   const existing = await getProject(workspaceId, projectId);
   if (!existing) throw new Error("Project not found in this workspace.");
@@ -238,16 +240,22 @@ export async function archiveProject(workspaceId: string, projectId: string): Pr
     archivedAt: new Date().toISOString(),
     updatedAt: serverTimestamp(),
   });
+  // Archiving frees a slot — resync so the next creation/restore check
+  // sees accurate capacity. Fire-and-forget: the archive itself already
+  // succeeded above regardless of whether this does.
+  void resyncProjectCount(workspaceId);
 }
 
+/**
+ * Restoring an archived project INCREASES the active count, so unlike
+ * archive/delete it must be checked against maxProjects — the same
+ * threat class as creation. firestore.rules' `projects` update rule
+ * now specifically denies a client-direct true->false `isArchived`
+ * transition, so this goes through /api/projects/restore instead of a
+ * plain updateDoc — see that route's doc comment.
+ */
 export async function restoreProject(workspaceId: string, projectId: string): Promise<void> {
-  const existing = await getProject(workspaceId, projectId);
-  if (!existing) throw new Error("Project not found in this workspace.");
-  await updateDoc(projectDoc(projectId), {
-    isArchived: false,
-    archivedAt: null,
-    updatedAt: serverTimestamp(),
-  });
+  await callProjectApi("/api/projects/restore", { workspaceId, projectId });
 }
 
 export async function deleteProject(workspaceId: string, projectId: string): Promise<void> {
@@ -263,7 +271,12 @@ export async function deleteProject(workspaceId: string, projectId: string): Pro
     }
   }
 
+  const wasActive = !existing.isArchived;
   await deleteDoc(projectDoc(projectId));
+  // Only resync if the deleted project was actually counted (active,
+  // not already archived) — avoids an unnecessary aggregate query on
+  // the common "delete an already-archived project" path.
+  if (wasActive) void resyncProjectCount(workspaceId);
 }
 
 export async function duplicateProject(
@@ -274,35 +287,41 @@ export async function duplicateProject(
   const existing = await getProject(workspaceId, projectId);
   if (!existing) throw new Error("Project not found in this workspace.");
 
-  const newRef = doc(projectsCol());
-
-  const duplicate: Omit<Project, "createdAt" | "updatedAt"> = {
-    ...existing,
-    id: newRef.id,
+  // Same quota-gated server route as createProject — a duplicate is
+  // still a NEW active project counting against maxProjects, so it
+  // can't bypass the check just by going through a different client
+  // function that used to write straight to Firestore.
+  const { projectId: newProjectId } = await callProjectApi<{ projectId: string }>("/api/projects/create", {
+    workspaceId,
     name: `${existing.name} (Copy)`,
-    isArchived: false,
-    archivedAt: null,
-    favoritedBy: [],
-    pinnedBy: [],
-    progress: 0,
-    ownerId: requestedBy.uid,
-    members: [requestedBy],
-    createdBy: requestedBy.uid,
-  };
-
-  await setDoc(newRef, {
-    ...duplicate,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
+    description: existing.description,
+    color: existing.color,
+    icon: existing.icon,
+    statusId: existing.statusId,
+    priorityId: existing.priorityId,
+    startDate: existing.startDate,
+    dueDate: existing.dueDate,
+    tags: existing.tags,
+    ownerDisplayName: requestedBy.displayName,
+    ownerPhotoURL: requestedBy.photoURL,
+    ownerEmail: requestedBy.email,
   });
 
   try {
-    await upsertProjectMembership({ projectId: newRef.id, workspaceId, uid: requestedBy.uid, role: "owner", addedBy: requestedBy.uid });
+    await upsertProjectMembership({ projectId: newProjectId, workspaceId, uid: requestedBy.uid, role: "owner", addedBy: requestedBy.uid });
   } catch (err) {
     console.error("[projectService.duplicateProject] owner project_members write failed (project was still created):", err);
   }
 
-  return newRef.id;
+  if (existing.coverImageUrl) {
+    try {
+      await updateDoc(projectDoc(newProjectId), { coverImageUrl: existing.coverImageUrl, updatedAt: serverTimestamp() });
+    } catch (err) {
+      console.error("[projectService.duplicateProject] cover image copy failed (project was still created):", err);
+    }
+  }
+
+  return newProjectId;
 }
 
 export async function toggleFavorite(workspaceId: string, projectId: string, uid: string, isFavorited: boolean): Promise<void> {
