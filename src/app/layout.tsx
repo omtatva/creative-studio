@@ -4,6 +4,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { WorkspaceProvider } from "@/contexts/WorkspaceContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { ToastContainer } from "@/components/ui/ToastContainer";
+import { ChunkErrorRecovery } from "@/components/shared/ChunkErrorRecovery";
 
 export const metadata: Metadata = {
   title: "Creative Studio",
@@ -26,6 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <ThemeProvider>
               {children}
               <ToastContainer />
+              <ChunkErrorRecovery />
             </ThemeProvider>
           </WorkspaceProvider>
         </AuthProvider>
