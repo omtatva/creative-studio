@@ -10,8 +10,10 @@ import { Button } from "@/components/ui/Button";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { useAuth } from "@/hooks/useAuth";
+import { useMaintenanceMode } from "@/hooks/useMaintenanceMode";
 import { isSuperAdminUser } from "@/lib/constants/itSupport";
 import { ROUTES } from "@/lib/constants/routes";
+import { Construction } from "lucide-react";
 
 /**
  * Shell used by every authenticated route (dashboard, settings).
@@ -51,11 +53,32 @@ export function MainLayout({ children }: { children: ReactNode }) {
   const { error: workspaceError, isLoading: isWorkspaceLoading, refreshWorkspace } = useWorkspaceContext();
   const { profile } = useAuthContext();
   const { logout, isSubmitting: isSigningOut } = useAuth();
+  const { maintenanceMode } = useMaintenanceMode();
   const isSuperAdmin = isSuperAdminUser(profile);
 
   return (
     <ProtectedRoute>
-      {!isWorkspaceLoading && workspaceError && !isSuperAdmin ? (
+      {maintenanceMode && !isSuperAdmin ? (
+        // Soft, frontend-enforced gate — an availability control, not a
+        // security one (see PlatformSettings' doc comment). The
+        // exemption below checks the trusted, server-only-writable
+        // `platformRole` field (isSuperAdminUser), never a flag the
+        // browser could forge, so Super Admin/IT Support genuinely
+        // always retains access — this never relies on a redirect a
+        // determined admin account could simply skip.
+        <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
+          <Construction className="h-10 w-10 text-foreground-muted" />
+          <div>
+            <h1 className="text-lg font-semibold text-foreground">Under maintenance</h1>
+            <p className="mt-1 max-w-sm text-sm text-foreground-muted">
+              Creative Studio is temporarily unavailable while we make some changes. Please check back shortly.
+            </p>
+          </div>
+          <Button size="sm" variant="outline" onClick={logout} isLoading={isSigningOut}>
+            Sign out
+          </Button>
+        </div>
+      ) : !isWorkspaceLoading && workspaceError && !isSuperAdmin ? (
         <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6">
           <ErrorState title="Couldn't load your workspace" message={workspaceError} onRetry={refreshWorkspace} />
           {/* This screen blocks the whole app shell (sidebar/navbar,

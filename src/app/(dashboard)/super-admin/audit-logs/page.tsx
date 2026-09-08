@@ -16,6 +16,7 @@ const ACTION_LABEL: Record<PlatformAuditAction, string> = {
   plan_activated: "Plan activated",
   enterprise_activated: "Enterprise activated",
   subscription_status_changed: "Subscription status changed",
+  platform_settings_updated: "Platform settings updated",
 };
 
 /** Super Admin > Audit Logs — every Super Admin action, see platformAudit.types.ts. Read-only. */
@@ -50,9 +51,13 @@ export default function SuperAdminAuditLogsPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <Badge variant="info">{ACTION_LABEL[log.action] ?? log.action}</Badge>
-                    <Link href={`${ROUTES.superAdminCustomers}/${log.workspaceId}`} className="truncate text-sm font-medium text-foreground hover:underline">
-                      {log.workspaceId}
-                    </Link>
+                    {log.workspaceId === "platform" ? (
+                      <span className="truncate text-sm font-medium text-foreground-muted">Platform-wide</span>
+                    ) : (
+                      <Link href={`${ROUTES.superAdminCustomers}/${log.workspaceId}`} className="truncate text-sm font-medium text-foreground hover:underline">
+                        {log.workspaceId}
+                      </Link>
+                    )}
                   </div>
                   {Object.keys(log.details).length > 0 && (
                     <p className="mt-1 truncate text-xs text-foreground-muted">{JSON.stringify(log.details)}</p>

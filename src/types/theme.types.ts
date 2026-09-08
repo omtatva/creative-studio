@@ -77,28 +77,36 @@ function opaque(hex: string): BrandColor {
 }
 
 /**
- * The Omtatva Digitals default — a premium dark-navy identity
- * matching the public landing page. Brand/status colors
- * (primary/secondary/accent/success/warning/error/info) are
- * unchanged from the original light default; only the surface family
- * (sidebar/navbar/background/cards/borders/text) shifts to navy, see
- * globals.css's `.dark` block for the matching pre-hydration values.
+ * The Omtatva Digitals default — a premium, cinematic identity built
+ * around Deep Navy, Slate, Warm Grey, Soft Beige, Muted Brown, and
+ * Near Black. See globals.css's `.dark` block for the matching
+ * pre-hydration CSS variable values (kept in sync by hand — this is
+ * the source of truth for a NEW workspace's colors; globals.css is
+ * the source of truth for what renders before a workspace's own
+ * ThemeSettings finish loading).
+ *
+ * `buttons` is deliberately a darkened Muted Brown, not the same hex
+ * as `primary` — Button.tsx's primary variant renders white text on
+ * this fill, and white-on-#B48563 (the true Muted Brown) falls short
+ * of a comfortable contrast ratio, while white-on-#8C6748 clears it;
+ * #B48563 itself still reads fine as TEXT/icons directly against
+ * these dark backgrounds.
  */
 export const DEFAULT_COLOR_ROLES: ColorRoles = {
-  primary: opaque("#6366f1"),
-  secondary: opaque("#14b8a6"),
-  accent: opaque("#f43f5e"),
-  sidebar: opaque("#0b0f1c"),
-  navbar: opaque("#0b0f1c"),
-  background: opaque("#080b14"),
-  cards: opaque("#12162a"),
-  borders: opaque("#232a47"),
-  buttons: opaque("#6366f1"),
-  text: opaque("#eef1fb"),
-  success: opaque("#10b981"),
-  warning: opaque("#f59e0b"),
-  error: opaque("#ef4444"),
-  info: opaque("#3b82f6"),
+  primary: opaque("#B48563"),
+  secondary: opaque("#3B4952"),
+  accent: opaque("#B48563"),
+  sidebar: opaque("#0E202B"),
+  navbar: opaque("#0E202B"),
+  background: opaque("#161616"),
+  cards: opaque("#16242F"),
+  borders: opaque("#2C3940"),
+  buttons: opaque("#8C6748"),
+  text: opaque("#F3EDE8"),
+  success: opaque("#5B9A6F"),
+  warning: opaque("#C79A5B"),
+  error: opaque("#B5544A"),
+  info: opaque("#6E8CA0"),
 };
 
 export const DEFAULT_THEME: ThemeSettings = {

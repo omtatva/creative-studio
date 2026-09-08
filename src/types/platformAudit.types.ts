@@ -15,8 +15,18 @@ import { ID, Timestamps } from "./common.types";
  * `details` carries an `event` sub-classification (e.g.
  * "checkout_created") where one action id covers more than one real
  * event shape.
+ *
+ * `workspaceId` is `"platform"` (a sentinel, not a real workspace id)
+ * for events with no per-workspace scope at all — currently only
+ * `platform_settings_updated` (see /api/platform-settings/update). The
+ * Audit Logs page checks for this sentinel and skips linking to
+ * Super Admin > Customers for those rows.
  */
-export type PlatformAuditAction = "plan_activated" | "enterprise_activated" | "subscription_status_changed";
+export type PlatformAuditAction =
+  | "plan_activated"
+  | "enterprise_activated"
+  | "subscription_status_changed"
+  | "platform_settings_updated";
 
 export interface PlatformAuditLogEntry extends Timestamps {
   id: ID;

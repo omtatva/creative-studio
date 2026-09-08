@@ -12,8 +12,8 @@ interface LogoFormationSceneProps {
   compact?: boolean;
 }
 
-const NEUTRAL_COLOR = new THREE.Color("#6366f1");
-const RIM_COLOR = "#22d3ee";
+const NEUTRAL_COLOR = new THREE.Color("#B48563");
+const RIM_COLOR = "#D3C2B8";
 const LOOP_DURATION = 18; // seconds — matches 0-3 empty / 3-6 enter / 6-9 converge / 9-11 hold / 11-14 break / 14-18 disperse
 
 function mulberry32(seed: number): () => number {
@@ -197,9 +197,9 @@ export function LogoFormationScene({ pageProgress, compact = false }: LogoFormat
 
   return (
     <>
-      <fog attach="fog" args={["#05070d", 5, 13]} />
+      <fog attach="fog" args={["#161616", 5, 13]} />
       <ambientLight intensity={0.3} />
-      <directionalLight position={[3, 4, 4]} intensity={0.9} color="#eef1fb" />
+      <directionalLight position={[3, 4, 4]} intensity={0.9} color="#F2ECE7" />
       <pointLight position={[-3, 1, 2]} intensity={0.4} color={RIM_COLOR} />
       <pointLight position={[0, -1, 3]} intensity={0.25} color={NEUTRAL_COLOR} />
 

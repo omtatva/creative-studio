@@ -12,6 +12,7 @@ import { Workspace, Member, WorkspaceInvite, CustomRole, WorkspaceSlug } from "@
 import { WorkspaceSubscription, SalesLead } from "@/types/billing.types";
 import { PlatformAuditLogEntry } from "@/types/platformAudit.types";
 import { PlatformPlanConfig } from "@/types/platformConfig.types";
+import { PlatformSettings } from "@/types/platformSettings.types";
 import { WorkspaceSettings } from "@/types/settings.types";
 import { Project, ProjectMembership } from "@/types/project.types";
 import { Task, TaskComment, TaskAttachment, TaskActivityEntry } from "@/types/task.types";
@@ -77,6 +78,9 @@ export const platformAuditLogsCol = () => collection(db, "platform_audit_logs") 
 
 /** See PlatformPlanConfig's doc comment in platformConfig.types.ts — a singleton doc, public read, Super-Admin-only write. */
 export const platformPlanConfigDoc = () => doc(db, "platform_config", "plans") as DocumentReference<PlatformPlanConfig>;
+
+/** See PlatformSettings' doc comment in platformSettings.types.ts — a singleton doc, read by any signed-in user (for maintenance-mode gating), admin-SDK-write-only. */
+export const platformSettingsDoc = () => doc(db, "platform_settings", "global") as DocumentReference<PlatformSettings>;
 
 /** Document ID IS the slug — see WorkspaceSlug's doc comment in workspace.types.ts for why this is a separate, minimal collection. */
 export const workspaceSlugsCol = () => collection(db, "workspace_slugs") as CollectionReference<WorkspaceSlug>;
