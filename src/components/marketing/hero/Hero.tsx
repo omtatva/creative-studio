@@ -34,7 +34,25 @@ export function Hero() {
   const [videoReady, setVideoReady] = useState(false);
 
   useEffect(() => {
-    setPlayVideo(shouldPlayVideo(prefersReducedMotion));
+    if (!shouldPlayVideo(prefersReducedMotion)) {
+      setPlayVideo(false);
+      return;
+    }
+    // Defer mounting the <video> (and its ~8MB fetch) until the page
+    // has had a chance to finish its own critical load — otherwise it
+    // competes for bandwidth/priority with the JS bundle and every
+    // other section's assets right when the page is trying to become
+    // interactive, which is exactly what shows up as "the page takes
+    // forever to load." requestIdleCallback (with a setTimeout
+    // fallback for Safari, which doesn't have it) waits for that quiet
+    // moment; the gradient underlay already covers this gap visually.
+    const win = window as Window & { requestIdleCallback?: (cb: () => void) => number };
+    if (typeof win.requestIdleCallback === "function") {
+      const id = win.requestIdleCallback(() => setPlayVideo(true));
+      return () => (window as Window & { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback?.(id);
+    }
+    const timeout = window.setTimeout(() => setPlayVideo(true), 1500);
+    return () => window.clearTimeout(timeout);
   }, [prefersReducedMotion]);
 
   function scrollToNext() {

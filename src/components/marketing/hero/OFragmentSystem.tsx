@@ -15,9 +15,9 @@ interface OFragmentSystemProps {
   showConnections?: boolean;
 }
 
-const PRIMARY_COLOR = "#B48563"; // Muted Brown — matches --color-primary
-const ACCENT_COLOR = "#3B4952"; // Slate — matches --color-secondary
-const STRUCTURAL_COLOR = "#D3C2B8"; // Soft Beige — the faint "this is one object" skeleton
+const PRIMARY_COLOR = "#6366f1"; // rgb(99 102 241) — matches --color-primary
+const ACCENT_COLOR = "#14b8a6"; // rgb(20 184 166) — matches --color-secondary
+const STRUCTURAL_COLOR = "#818cf8"; // lighter indigo — the faint "this is one object" skeleton
 const SPIRAL_MAX = 0.85; // radians — how far a fully-broken fragment swings around Y from its radial line, so BREAK reads as an unfurl, not an explosion
 
 // Scratch objects reused across every fragment/every frame — avoids

@@ -29,9 +29,9 @@ export default function Scene3D({ fragmentCount, progress, frozenPhase, showConn
     >
       <ambientLight intensity={0.4} />
       <directionalLight position={[3, 4, 5]} intensity={1.2} />
-      <pointLight position={[-4, -2, -3]} intensity={0.5} color="#3B4952" />
+      <pointLight position={[-4, -2, -3]} intensity={0.5} color="#14b8a6" />
       {/* Rim light from behind/above — gives the clearcoat/metalness on the shard material a soft edge highlight instead of reading flat. */}
-      <pointLight position={[0, 3, -4]} intensity={0.6} color="#D3C2B8" />
+      <pointLight position={[0, 3, -4]} intensity={0.6} color="#818cf8" />
       <OFragmentSystem fragmentCount={fragmentCount} progress={progress} frozenPhase={frozenPhase} showConnections={showConnections} />
     </Canvas>
   );

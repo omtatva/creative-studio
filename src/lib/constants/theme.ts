@@ -38,16 +38,16 @@ function c(hex: string, opacity = 100) {
  */
 export const PRESET_PALETTES: BrandPalette[] = [
   palette("omtatva", "Omtatva", {
-    primary: c("#B48563"),
-    secondary: c("#3B4952"),
-    accent: c("#B48563"),
-    sidebar: c("#0E202B"),
-    navbar: c("#0E202B"),
-    background: c("#161616"),
-    cards: c("#16242F"),
-    borders: c("#2C3940"),
-    buttons: c("#8C6748"),
-    text: c("#F3EDE8"),
+    primary: c("#6366f1"),
+    secondary: c("#14b8a6"),
+    accent: c("#f43f5e"),
+    sidebar: c("#0b0f1c"),
+    navbar: c("#0b0f1c"),
+    background: c("#080b14"),
+    cards: c("#12162a"),
+    borders: c("#232a47"),
+    buttons: c("#6366f1"),
+    text: c("#eef1fb"),
   }),
   palette("corporate", "Corporate", {
     primary: c("#1e3a8a"),

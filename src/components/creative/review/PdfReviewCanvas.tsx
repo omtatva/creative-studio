@@ -144,7 +144,7 @@ export function PdfReviewCanvas({
   const pageAnnotations = annotations.filter((a) => a.pageNumber === page);
 
   return (
-    <div className="flex h-full flex-col bg-[#161616]">
+    <div className="flex h-full flex-col bg-[#2a2a2e]">
       <div className="flex flex-1 items-center justify-center overflow-auto p-6">
         <div className="relative shadow-soft-lg" style={{ width: canvasSize.width, height: canvasSize.height }}>
           <canvas ref={canvasRef} className="block bg-white" />

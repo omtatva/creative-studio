@@ -148,7 +148,7 @@ function renderInviteEmail({
           <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
             <tr>
               <td style="padding:32px 32px 8px 32px;">
-                <p style="margin:0;font-size:13px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#8C6748;">Omtatva Digitals</p>
+                <p style="margin:0;font-size:13px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#6366f1;">Omtatva Digitals</p>
               </td>
             </tr>
             <tr>
@@ -165,7 +165,7 @@ function renderInviteEmail({
             </tr>
             <tr>
               <td style="padding:0 32px 24px 32px;">
-                <a href="${inviteLink}" style="display:inline-block;background-color:#8C6748;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px;">
+                <a href="${inviteLink}" style="display:inline-block;background-color:#6366f1;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 24px;border-radius:8px;">
                   Accept Invitation
                 </a>
               </td>

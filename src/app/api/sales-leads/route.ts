@@ -125,7 +125,7 @@ function renderLeadEmail(lead: SalesLead): string {
       <tr><td align="center">
         <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
           <tr><td style="padding:32px 32px 8px 32px;">
-            <p style="margin:0;font-size:13px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#8C6748;">New Enterprise Inquiry</p>
+            <p style="margin:0;font-size:13px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:#6366f1;">New Enterprise Inquiry</p>
           </td></tr>
           <tr><td style="padding:8px 32px 24px 32px;">
             <h1 style="margin:0;font-size:20px;line-height:1.3;color:#111827;">${escapeHtml(lead.companyName)}</h1>
