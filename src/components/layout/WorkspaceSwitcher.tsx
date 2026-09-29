@@ -48,10 +48,10 @@ export function WorkspaceSwitcher({ variant = "navbar" }: { variant?: "navbar" |
       <button
         onClick={() => setIsOpen((v) => !v)}
         className={cn(
-          "flex items-center gap-2 text-sm font-medium text-foreground transition-colors",
+          "flex items-center gap-2 text-sm font-medium transition-colors",
           isSidebar
-            ? "w-full rounded-theme bg-surface-muted/60 px-2.5 py-2 hover:bg-surface-muted"
-            : "rounded-theme border border-border px-3 py-1.5 hover:bg-surface-muted"
+            ? "w-full rounded-theme bg-white/5 px-2.5 py-2 text-nav-text hover:bg-white/10"
+            : "rounded-theme border border-border px-3 py-1.5 text-foreground hover:bg-surface-muted"
         )}
       >
         {workspace?.companyLogoUrl ? (
@@ -63,7 +63,7 @@ export function WorkspaceSwitcher({ variant = "navbar" }: { variant?: "navbar" |
           </span>
         )}
         <span className={cn("truncate text-left", isSidebar ? "flex-1" : "max-w-[140px]")}>{workspace?.name ?? "Select workspace"}</span>
-        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-foreground-muted" />
+        <ChevronDown className={cn("h-3.5 w-3.5 shrink-0", isSidebar ? "text-nav-muted" : "text-foreground-muted")} />
       </button>
 
       {isOpen && (

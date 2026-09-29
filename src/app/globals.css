@@ -3,39 +3,54 @@
 @tailwind utilities;
 
 /**
- * Default CSS variable values. ThemeContext overwrites --color-*,
- * --radius, and --font-family on <html> at runtime based on the
- * workspace's saved ThemeSettings — these are just the pre-hydration
- * fallback so there's no flash of unstyled content.
+ * TWO SEPARATE THEME SCOPES — see ThemeContext.tsx's isPublicRoute()
+ * for the routing logic that decides which one applies where.
+ *
+ * :root — the PUBLIC WEBSITE identity (marketing homepage, pricing,
+ * login/signup/forgot-password, invite, workspace/create): a dark,
+ * cinematic creative-tech look — near-black/deep-blue background, the
+ * existing blue 3D/video hero visuals (recolor kept OUT of tokens —
+ * those live as their own hardcoded hex in the marketing hero WebGL
+ * files, since Three.js material/light colors can't read CSS vars
+ * anyway), white typography, blue/violet/pink used only as accents.
+ *
+ * .app-shell — the INTERNAL APPLICATION identity (everything under
+ * the (dashboard) route group: dashboard, projects, settings, Super
+ * Admin, billing, AI Studio, video review, plus /share/* which
+ * renders real review content, not marketing): a professional blue
+ * SaaS look — dark blue sidebar, light blue background, white cards,
+ * blue primary actions. Applied by wrapping the (dashboard) group's
+ * layout in this class (see (dashboard)/layout.tsx); ThemeContext
+ * then ALSO sets the same --color-* variables as inline styles on
+ * <html> for app routes (so per-workspace branding customization
+ * still works there) — .app-shell's values are the pre-hydration /
+ * no-JS fallback, not the only source.
+ *
+ * These two scopes intentionally do NOT share one palette — a dark
+ * cinematic public site and a light SaaS dashboard are deliberately
+ * different. Status colors (success/warning/error/info) are semantic
+ * and shared by both.
  */
 :root {
-  --color-primary: 99 102 241;
-  --color-secondary: 20 184 166;
-  --color-accent: 244 63 94;
-  --color-surface: 255 255 255;
-  --color-surface-muted: 244 245 247;
-  --color-border: 228 229 233;
-  --color-foreground: 23 23 28;
-  --color-foreground-muted: 113 113 122;
+  --color-primary: 88 101 242; /* #5865F2 */
+  --color-secondary: 139 92 246; /* Violet #8B5CF6 */
+  --color-accent: 236 72 153; /* Pink #EC4899 — used sparingly, as an accent only */
+  --color-surface: 8 20 38; /* Deep blue #081426 */
+  --color-surface-muted: 11 24 48; /* Midnight blue #0B1830 */
+  --color-border: 30 42 68; /* subtle blue-grey */
+  --color-foreground: 248 250 252; /* #F8FAFC */
+  --color-foreground-muted: 168 180 199; /* Secondary text #A8B4C7 */
 
-  /* Extended brand color roles (see types/theme.types.ts ColorRoleKey).
-     "Borders" and "Text" reuse --color-border / --color-foreground above
-     rather than introducing a second source of truth for the same
-     concept — see ThemeContext.applyThemeToDocument. */
-  --color-sidebar: 255 255 255;
-  --color-navbar: 255 255 255;
-  --color-background: 255 255 255;
-  --color-cards: 255 255 255;
-  --color-buttons: 99 102 241;
-  --color-success: 16 185 129;
-  --color-warning: 245 158 11;
-  --color-error: 239 68 68;
-  --color-info: 59 130 246;
+  --color-sidebar: 8 20 38; /* unused on public routes (no sidebar) — harmless fallback */
+  --color-navbar: 5 9 20;
+  --color-background: 5 9 20; /* #050914 */
+  --color-cards: 11 24 48; /* Midnight blue #0B1830 */
+  --color-buttons: 88 101 242; /* flat fallback — the hero/nav CTAs use their own gradient className, not this */
+  --color-success: 91 154 111; /* muted green — semantic, shared by both scopes */
+  --color-warning: 199 154 91; /* warm amber */
+  --color-error: 181 84 74; /* muted red */
+  --color-info: 110 140 160; /* muted blue-grey */
 
-  /* Companion opacity values (0-1) for each role, set alongside the
-     channel string above. Available for advanced use
-     (rgb(var(--color-x) / var(--color-x-opacity))) — most utility
-     classes use Tailwind's own /NN alpha modifier instead. */
   --color-primary-opacity: 1;
   --color-secondary-opacity: 1;
   --color-accent-opacity: 1;
@@ -51,16 +66,60 @@
   --color-error-opacity: 1;
   --color-info-opacity: 1;
 
+  /* Structural-only tokens (not ColorRoleKeys) — unused on public
+     routes (no sidebar there), kept only as a harmless fallback. */
+  --nav-text: 255 255 255;
+  --nav-muted: 174 184 188;
+
+  /* Used by Button.tsx's outline variant — kept a cool, low-alpha blue
+     border here instead of a solid hex, to match the "glass" look. */
+  --sand: 30 42 68;
+  --primary-soft: 11 24 48;
+
   --radius: 14px;
   --font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
-/* Omtatva Digitals dark navy identity — see DEFAULT_COLOR_ROLES in
-   types/theme.types.ts for the customizable-role counterparts these
-   values are kept in sync with (sidebar/navbar/background/cards/
-   borders/text). --color-surface/-surface-muted have no Settings-page
-   equivalent — they're mode-only structural tokens, not part of the
-   branding color picker. */
+/* Internal application — professional blue SaaS identity. */
+.app-shell {
+  --color-primary: 61 111 168; /* #3D6FA8 */
+  --color-secondary: 23 43 77; /* #172B4D — same family as the sidebar, for a cohesive all-blue app */
+  --color-accent: 61 111 168;
+  --color-surface: 248 250 252; /* Input background #F8FAFC */
+  --color-surface-muted: 234 243 255; /* Light blue #EAF3FF */
+  --color-border: 220 230 240; /* #DCE6F0 */
+  --color-foreground: 30 41 59; /* Main text #1E293B */
+  --color-foreground-muted: 100 116 139; /* Secondary text #64748B */
+
+  --color-sidebar: 23 43 77; /* #172B4D */
+  --color-navbar: 255 255 255;
+  --color-background: 243 247 252; /* #F3F7FC */
+  --color-cards: 255 255 255;
+  --color-buttons: 61 111 168;
+
+  --color-primary-opacity: 1;
+  --color-secondary-opacity: 1;
+  --color-accent-opacity: 1;
+  --color-sidebar-opacity: 1;
+  --color-navbar-opacity: 1;
+  --color-background-opacity: 1;
+  --color-cards-opacity: 1;
+  --color-borders-opacity: 1;
+  --color-buttons-opacity: 1;
+  --color-text-opacity: 1;
+
+  --nav-text: 217 229 242; /* #D9E5F2 */
+  --nav-muted: 175 192 212; /* #AFC0D4 */
+
+  /* Keep the outline button's border/soft-surface family blue-neutral
+     in-app instead of the public scope's warm Sand. */
+  --sand: 220 230 240; /* #DCE6F0 */
+  --primary-soft: 234 243 255; /* #EAF3FF */
+}
+
+/* Dark mode remains available as an explicit opt-in (Settings > Theme)
+   for the internal application — unrelated to the public site, which
+   has no dark variant. Left as the existing dark-navy identity. */
 .dark {
   --color-surface: 17 21 39;
   --color-surface-muted: 22 27 48;
@@ -71,6 +130,8 @@
   --color-navbar: 11 15 28;
   --color-background: 8 11 20;
   --color-cards: 18 22 42;
+  --nav-text: 238 241 251;
+  --nav-muted: 137 146 179;
 }
 
 html,

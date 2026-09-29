@@ -1,11 +1,28 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import { DEFAULT_THEME, DEFAULT_COLOR_ROLES, ThemeSettings, ColorRoleKey } from "@/types/theme.types";
 import { RADIUS_MAP, FONT_MAP } from "@/lib/constants/theme";
 import { hexToChannelString, hexToHsl, hslToHex } from "@/lib/utils/color";
 import { useWorkspaceContext } from "./WorkspaceContext";
 import { getWorkspaceSettings, updateWorkspaceSettings } from "@/services/settingsService";
+
+/**
+ * PUBLIC WEBSITE vs INTERNAL APPLICATION theme scoping — these are two
+ * deliberately separate identities (see globals.css's `:root` vs
+ * `.app-shell`), not one palette applied everywhere. A route not
+ * listed here (every (dashboard) route, plus /share/* which renders
+ * real review content rather than marketing) gets the internal
+ * application theme by default — see applyThemeToDocument below.
+ */
+const PUBLIC_ROUTE_PREFIXES = ["/pricing", "/login", "/signup", "/forgot-password", "/invite", "/workspace/create"];
+
+function isPublicRoute(pathname: string | null): boolean {
+  if (!pathname) return false;
+  if (pathname === "/") return true;
+  return PUBLIC_ROUTE_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
 
 /**
  * Applies ThemeSettings to CSS variables on <html> at runtime, so
@@ -114,9 +131,36 @@ const DARK_STRUCTURAL_SHADE = {
   "--color-foreground-muted": { s: 22, l: 62 },
 };
 
-function applyThemeToDocument(theme: ThemeSettings) {
+function applyThemeToDocument(theme: ThemeSettings, isPublic: boolean) {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
+
+  // Public website routes get NONE of the internal application's
+  // dynamic (possibly per-workspace-customized) color application —
+  // they always render globals.css's plain `:root` identity (light
+  // cream + Copper). Clearing any previously-set inline overrides
+  // matters when navigating FROM an app route TO a public one (e.g.
+  // signing out) within the same session. `.app-shell` (toggled off
+  // here) is what carries the internal application's own palette —
+  // see the `else` path below and globals.css's doc comment for why
+  // toggling a class on <html> (rather than a nested wrapper div) is
+  // what lets a workspace's inline custom-color override still win
+  // over `.app-shell`'s static defaults for that same element.
+  if (isPublic) {
+    (Object.values(COLOR_CSS_VAR) as string[]).forEach((cssVar) => {
+      root.style.removeProperty(cssVar);
+      root.style.removeProperty(`${cssVar}-opacity`);
+    });
+    (Object.keys(DARK_STRUCTURAL_SHADE) as (keyof typeof DARK_STRUCTURAL_SHADE)[]).forEach((cssVar) => {
+      root.style.removeProperty(cssVar);
+    });
+    root.classList.remove("app-shell", "dark");
+    root.style.setProperty("--radius", RADIUS_MAP[theme.borderRadius]);
+    root.style.setProperty("--font-family", FONT_MAP[theme.fontFamily]);
+    return;
+  }
+
+  root.classList.add("app-shell");
 
   const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
   const shouldBeDark = theme.mode === "dark" || (theme.mode === "system" && prefersDark);
@@ -172,12 +216,14 @@ function applyThemeToDocument(theme: ThemeSettings) {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const { workspaceId } = useWorkspaceContext();
+  const pathname = usePathname();
+  const isPublic = isPublicRoute(pathname);
   const [theme, setThemeState] = useState<ThemeSettings>(DEFAULT_THEME);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    applyThemeToDocument(theme);
-  }, [theme]);
+    applyThemeToDocument(theme, isPublic);
+  }, [theme, isPublic]);
 
   useEffect(() => {
     if (!workspaceId) {

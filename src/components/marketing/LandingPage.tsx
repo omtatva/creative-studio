@@ -11,17 +11,18 @@ import { FeaturedWork } from "./sections/FeaturedWork";
 import { FinalCta } from "./sections/FinalCta";
 
 /**
- * Public marketing landing page — the whole tree is wrapped in a
- * locally-forced `.dark` scope so it always reads as the intended
- * cinematic dark palette regardless of the visitor's OS preference,
- * without touching ThemeContext/global theme state at all (a
- * logged-out visitor has no workspace, so ThemeContext already sits
- * on DEFAULT_THEME — this class just wins the same `.dark` CSS rules
- * already defined in globals.css for this subtree).
+ * Public marketing landing page. Previously wrapped in a locally-
+ * forced `.dark` scope so it always read as a cinematic dark palette
+ * regardless of the visitor's OS preference — removed now that the
+ * light, warm palette (DEFAULT_THEME.mode: "light") IS the intended
+ * public identity, not a fallback. A logged-out visitor has no
+ * workspace, so ThemeContext already sits on DEFAULT_THEME; this div
+ * just needed its own background/text tokens (unchanged) since it
+ * sits outside the authenticated shell.
  */
 export function LandingPage() {
   return (
-    <div className="dark bg-background text-foreground">
+    <div className="bg-background text-foreground">
       <Navbar />
       <main>
         <Hero />

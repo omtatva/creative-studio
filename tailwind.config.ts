@@ -33,6 +33,12 @@ const config: Config = {
         warning: "rgb(var(--color-warning) / <alpha-value>)",
         error: "rgb(var(--color-error) / <alpha-value>)",
         info: "rgb(var(--color-info) / <alpha-value>)",
+        // Structural-only tokens — not ColorRoleKeys, not part of the
+        // branding color picker. See globals.css's doc comment.
+        "nav-text": "rgb(var(--nav-text) / <alpha-value>)",
+        "nav-muted": "rgb(var(--nav-muted) / <alpha-value>)",
+        sand: "rgb(var(--sand) / <alpha-value>)",
+        "primary-soft": "rgb(var(--primary-soft) / <alpha-value>)",
       },
       borderRadius: {
         theme: "var(--radius)",

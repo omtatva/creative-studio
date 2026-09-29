@@ -15,8 +15,8 @@ interface OFragmentSystemProps {
   showConnections?: boolean;
 }
 
-const PRIMARY_COLOR = "#6366f1"; // rgb(99 102 241) — matches --color-primary
-const ACCENT_COLOR = "#14b8a6"; // rgb(20 184 166) — matches --color-secondary
+const PRIMARY_COLOR = "#6366f1"; // indigo/blue — the public site's existing cinematic accent, kept as-is by design (not part of the internal app's palette)
+const ACCENT_COLOR = "#14b8a6"; // teal
 const STRUCTURAL_COLOR = "#818cf8"; // lighter indigo — the faint "this is one object" skeleton
 const SPIRAL_MAX = 0.85; // radians — how far a fully-broken fragment swings around Y from its radial line, so BREAK reads as an unfurl, not an explosion
 

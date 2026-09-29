@@ -6,17 +6,21 @@ import { motion } from "framer-motion";
 import { ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { ROUTES } from "@/lib/constants/routes";
-import { useReducedMotion } from "./useReducedMotion"; 
+import { useReducedMotion } from "./useReducedMotion";
 
 /**
  * Full-viewport autoplaying background video (public/marketing/hero-background.mp4,
- * served as a static asset — no backend involved). Text sits directly
- * over the video with only a left-side gradient scrim for legibility
- * (no solid glass panel) so the video stays visible, not covered.
- * Skips the video entirely (falling back to a plain navy/violet
- * gradient) for `prefers-reduced-motion` and for `navigator.connection`'s
- * save-data/slow-network signal, so nobody on a constrained connection
- * is forced to download an 8MB clip they can't see the benefit of anyway.
+ * served as a static asset — no backend involved) — the existing blue
+ * cinematic 3D/video visual, kept exactly as-is and NOT replaced (public
+ * site design direction: full-screen dark cinematic background + this
+ * video + blue/violet/pink accents — see globals.css's `:root` block).
+ * Text sits directly over the video with only a left-side gradient
+ * scrim for legibility (no solid glass panel, no card) so the video
+ * stays visible and fills the entire hero. Skips the video entirely
+ * (falling back to the plain dark gradient) for `prefers-reduced-motion`
+ * and for `navigator.connection`'s save-data/slow-network signal, so
+ * nobody on a constrained connection is forced to download an 8MB clip
+ * they can't see the benefit of anyway.
  */
 function shouldPlayVideo(prefersReducedMotion: boolean): boolean {
   if (prefersReducedMotion) return false;
@@ -61,7 +65,7 @@ export function Hero() {
 
   return (
     <section id="hero" className="relative flex min-h-screen w-full items-center overflow-hidden bg-background">
-      {/* Gradient underlay — always present, so there's never a black flash before the video loads (or at all, if it's skipped). */}
+      {/* Gradient underlay — always present, so there's never a flash before the video loads (or at all, if it's skipped). */}
       <div className="absolute inset-0 bg-gradient-to-br from-background via-surface to-background" />
 
       {playVideo && (
@@ -92,7 +96,8 @@ export function Hero() {
         <p className="text-xs font-semibold uppercase tracking-[0.3em] text-primary">Creative work, organized beautifully.</p>
         <h1 className="mt-4 max-w-xl text-4xl font-semibold leading-tight text-foreground sm:text-5xl md:text-6xl">
           Create. Review.{" "}
-          <span className="bg-gradient-to-r from-primary via-accent to-secondary bg-clip-text text-transparent">
+          {/* Blue → Violet → Pink — subtle and premium, not neon (see globals.css: primary/secondary/accent). */}
+          <span className="bg-gradient-to-r from-primary via-secondary to-accent bg-clip-text text-transparent">
             Transform.
           </span>
         </h1>
@@ -101,10 +106,19 @@ export function Hero() {
           creative teams.
         </p>
         <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-          <Button size="lg" onClick={() => router.push(`${ROUTES.signup}?plan=starter`)}>
+          <Button
+            size="lg"
+            onClick={() => router.push(`${ROUTES.signup}?plan=starter`)}
+            className="bg-[linear-gradient(135deg,#5865F2,#8B5CF6)] text-white shadow-[0_0_28px_rgba(88,101,242,0.35)] hover:opacity-90"
+          >
             Start Free
           </Button>
-          <Button size="lg" variant="outline" onClick={() => router.push(ROUTES.pricing)}>
+          <Button
+            size="lg"
+            variant="outline"
+            onClick={() => router.push(ROUTES.pricing)}
+            className="border-[rgba(123,167,255,0.30)] bg-white/5 text-[#F8FAFC] backdrop-blur-sm hover:bg-[rgba(88,101,242,0.15)]"
+          >
             View Plans
           </Button>
         </div>
@@ -115,7 +129,7 @@ export function Hero() {
         className="absolute bottom-8 right-6 z-10 flex items-center gap-2 rounded-full p-2 text-xs font-medium text-foreground-muted transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 sm:right-12"
       >
         Scroll to explore
-        <ArrowDown className="h-4 w-4 motion-safe:animate-bounce" />
+        <ArrowDown className="h-4 w-4 text-[#7BA7FF] motion-safe:animate-bounce" />
       </button>
     </section>
   );

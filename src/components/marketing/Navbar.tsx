@@ -85,7 +85,11 @@ export function Navbar() {
             <Button variant="ghost" size="sm" onClick={() => router.push(ROUTES.login)}>
               Sign In
             </Button>
-            <Button size="sm" onClick={() => router.push(ROUTES.signup)}>
+            <Button
+              size="sm"
+              onClick={() => router.push(ROUTES.signup)}
+              className="bg-[linear-gradient(135deg,#5865F2,#8B5CF6)] text-white shadow-[0_0_16px_rgba(88,101,242,0.3)] hover:opacity-90"
+            >
               Get Started
             </Button>
           </div>

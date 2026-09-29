@@ -16,9 +16,17 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 const variantClasses: Record<ButtonVariant, string> = {
   primary: "bg-buttons text-white hover:opacity-90 shadow-soft",
   secondary: "bg-secondary text-white hover:opacity-90 shadow-soft",
-  outline: "border border-border bg-transparent text-foreground hover:bg-surface-muted",
+  // Secondary CTA: transparent background (works against any backdrop
+  // in either theme scope — a dark cinematic hero or a light card),
+  // --sand border, Slate/secondary text. Callers needing a specific
+  // "glass" treatment (e.g. the marketing hero) pass their own
+  // className, which cn()/tailwind-merge correctly overrides this with.
+  outline: "border border-sand bg-transparent text-secondary hover:bg-surface-muted",
   ghost: "bg-transparent text-foreground hover:bg-surface-muted",
-  danger: "bg-red-600 text-white hover:bg-red-700",
+  // Semantic muted red (--color-error), not Tailwind's default bright
+  // red — destructive actions stay clearly distinguishable without
+  // breaking from the rest of the app's muted status-color language.
+  danger: "bg-error text-white hover:opacity-90",
 };
 
 const sizeClasses: Record<ButtonSize, string> = {

@@ -77,32 +77,39 @@ function opaque(hex: string): BrandColor {
 }
 
 /**
- * The Omtatva Digitals default — a premium dark-navy identity
- * matching the public landing page. Brand/status colors
- * (primary/secondary/accent/success/warning/error/info) are
- * unchanged from the original light default; only the surface family
- * (sidebar/navbar/background/cards/borders/text) shifts to navy, see
- * globals.css's `.dark` block for the matching pre-hydration values.
+ * The Omtatva Digitals default — for the INTERNAL APPLICATION only
+ * (the public marketing site has its own, separate identity — see
+ * globals.css's `:root` block, unaffected by this constant). This is
+ * what ThemeContext applies on every authenticated (dashboard) route:
+ * a professional blue SaaS look — dark blue sidebar, light blue
+ * background, white cards, blue primary actions. See globals.css's
+ * `.app-shell` block for the matching pre-hydration values these are
+ * kept in sync with. `sidebar`/`navbar` intentionally differ — the
+ * sidebar column is the one dark surface in this design; the navbar
+ * sits in the light "main area" alongside cards/background, so it
+ * stays white (see Sidebar.tsx's separate --nav-text/--nav-muted
+ * tokens for why the sidebar needs its own text pairing instead of the
+ * global --color-foreground).
  */
 export const DEFAULT_COLOR_ROLES: ColorRoles = {
-  primary: opaque("#6366f1"),
-  secondary: opaque("#14b8a6"),
-  accent: opaque("#f43f5e"),
-  sidebar: opaque("#0b0f1c"),
-  navbar: opaque("#0b0f1c"),
-  background: opaque("#080b14"),
-  cards: opaque("#12162a"),
-  borders: opaque("#232a47"),
-  buttons: opaque("#6366f1"),
-  text: opaque("#eef1fb"),
-  success: opaque("#10b981"),
-  warning: opaque("#f59e0b"),
-  error: opaque("#ef4444"),
-  info: opaque("#3b82f6"),
+  primary: opaque("#3D6FA8"),
+  secondary: opaque("#172B4D"),
+  accent: opaque("#3D6FA8"),
+  sidebar: opaque("#172B4D"),
+  navbar: opaque("#FFFFFF"),
+  background: opaque("#F3F7FC"),
+  cards: opaque("#FFFFFF"),
+  borders: opaque("#DCE6F0"),
+  buttons: opaque("#3D6FA8"),
+  text: opaque("#1E293B"),
+  success: opaque("#5B9A6F"),
+  warning: opaque("#C79A5B"),
+  error: opaque("#B5544A"),
+  info: opaque("#6E8CA0"),
 };
 
 export const DEFAULT_THEME: ThemeSettings = {
-  mode: "dark",
+  mode: "light",
   borderRadius: "lg",
   fontFamily: "inter",
   cardStyle: "soft",

@@ -141,10 +141,10 @@ export function Sidebar() {
           <Avatar name={workspaceName} size="sm" />
         )}
         {!isCollapsed && (
-          <span className="truncate text-[13px] font-semibold tracking-[0.08em] text-foreground">{workspaceName.toUpperCase()}</span>
+          <span className="truncate text-[13px] font-semibold tracking-[0.08em] text-nav-text">{workspaceName.toUpperCase()}</span>
         )}
         <button
-          className="ml-auto rounded-theme p-1.5 text-foreground-muted hover:bg-surface-muted md:hidden"
+          className="ml-auto rounded-theme p-1.5 text-nav-muted hover:bg-white/10 md:hidden"
           onClick={() => setMobileNavOpen(false)}
           aria-label="Close menu"
         >
@@ -172,19 +172,12 @@ export function Sidebar() {
               className={cn(
                 "relative flex items-center gap-3 rounded-theme px-3 py-2 text-sm font-medium transition-colors",
                 isActive
-                  ? "bg-primary/10 text-primary"
-                  : "text-foreground-muted hover:bg-surface-muted hover:text-foreground",
+                  ? "bg-primary text-white shadow-soft"
+                  : "text-nav-muted hover:bg-white/5 hover:text-nav-text",
                 item.isDisabled && "pointer-events-none opacity-40",
                 isCollapsed && "justify-center px-0"
               )}
             >
-              {isActive && (
-                <motion.span
-                  layoutId="sidebar-active-accent"
-                  transition={{ duration: 0.18 }}
-                  className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-primary"
-                />
-              )}
               <span className="relative shrink-0">
                 {isAIStudio && !isActive && (
                   <span className="absolute inset-0 -m-1 rounded-full bg-primary/20 blur-[6px] motion-safe:animate-pulse" />
@@ -208,14 +201,14 @@ export function Sidebar() {
       </nav>
 
       {isSuperAdmin && (
-        <div className="border-t border-border px-2 py-2">
+        <div className="border-t border-white/10 px-2 py-2">
           <Link
             href={ROUTES.superAdmin}
             className={cn(
               "flex items-center gap-3 rounded-theme px-3 py-2 text-sm font-medium transition-colors",
               pathname === ROUTES.superAdmin || pathname.startsWith(`${ROUTES.superAdmin}/`)
-                ? "bg-primary/10 text-primary"
-                : "text-foreground-muted hover:bg-surface-muted hover:text-foreground",
+                ? "bg-primary text-white shadow-soft"
+                : "text-nav-muted hover:bg-white/5 hover:text-nav-text",
               isCollapsed && "justify-center px-0"
             )}
           >
@@ -227,7 +220,7 @@ export function Sidebar() {
 
       <button
         onClick={toggleSidebar}
-        className="hidden items-center justify-center gap-2 border-t border-border py-3 text-xs text-foreground-muted hover:bg-surface-muted md:flex"
+        className="hidden items-center justify-center gap-2 border-t border-white/10 py-3 text-xs text-nav-muted hover:bg-white/5 md:flex"
       >
         {isCollapsed ? <ChevronsRight className="h-4 w-4" /> : <ChevronsLeft className="h-4 w-4" />}
         {!isCollapsed && "Collapse"}
@@ -241,7 +234,7 @@ export function Sidebar() {
       <motion.aside
         animate={{ width: isCollapsed ? 72 : 240 }}
         transition={{ duration: 0.2, ease: "easeInOut" }}
-        className="sticky top-0 hidden h-screen shrink-0 border-r border-border bg-sidebar md:block"
+        className="sticky top-0 hidden h-screen shrink-0 border-r border-white/10 bg-sidebar md:block"
       >
         {content}
       </motion.aside>
@@ -255,7 +248,7 @@ export function Sidebar() {
             animate={{ x: 0 }}
             exit={{ x: -260 }}
             transition={{ duration: 0.2 }}
-            className="absolute left-0 top-0 h-full w-64 border-r border-border bg-sidebar"
+            className="absolute left-0 top-0 h-full w-64 border-r border-white/10 bg-sidebar"
           >
             {content}
           </motion.aside>

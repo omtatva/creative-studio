@@ -121,10 +121,15 @@ export function MobileMenu({ isOpen, onClose, links, onSignIn, onGetStarted, onN
             </nav>
 
             <div className="flex flex-col gap-3 border-t border-border pt-6">
-              <Button variant="outline" onClick={onSignIn}>
+              <Button variant="ghost" onClick={onSignIn}>
                 Sign In
               </Button>
-              <Button onClick={onGetStarted}>Get Started</Button>
+              <Button
+                onClick={onGetStarted}
+                className="bg-[linear-gradient(135deg,#5865F2,#8B5CF6)] text-white shadow-[0_0_16px_rgba(88,101,242,0.3)] hover:opacity-90"
+              >
+                Get Started
+              </Button>
             </div>
           </motion.div>
         </>
