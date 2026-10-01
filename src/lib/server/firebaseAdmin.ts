@@ -2,6 +2,7 @@ import "server-only";
 import { cert, getApps, initializeApp, applicationDefault, type App } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 import { SUPER_ADMIN_EMAIL } from "@/lib/constants/itSupport";
 
 /**
@@ -60,11 +61,22 @@ function getAdminApp(): App {
   return initializeApp({
     credential: buildCredential(),
     projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
   });
 }
 
 export const adminAuth = () => getAuth(getAdminApp());
 export const adminDb = () => getFirestore(getAdminApp());
+/**
+ * Admin Storage access — added for /api/files/finalize (audit
+ * Priority 4), which needs to read an uploaded object's REAL size
+ * (never trusting a client-supplied byte count) and, on a rejected
+ * upload, delete the object it can't let become a counted file.
+ * `storageBucket` above is the same bucket the client SDK already
+ * uses (NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET) — not a second, separate
+ * one.
+ */
+export const adminStorage = () => getStorage(getAdminApp()).bucket();
 
 export class AuthVerificationError extends Error {
   status: number;

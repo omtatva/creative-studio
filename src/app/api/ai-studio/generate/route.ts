@@ -5,6 +5,7 @@ import { checkAndIncrementAIUsage, AIQuotaExceededError } from "@/lib/server/aiQ
 import { enforceRateLimit, RateLimitExceededError } from "@/lib/server/rateLimit";
 import { decryptSecret, type EncryptedSecret } from "@/lib/server/secretCrypto";
 import { generateNvidiaText, NvidiaApiError } from "@/lib/server/nvidiaClient";
+import { resolveWorkspaceEntitlements } from "@/lib/server/workspaceEntitlements";
 
 export const runtime = "nodejs";
 
@@ -113,15 +114,38 @@ export async function POST(request: NextRequest) {
   if (!workspaceSnap.exists) {
     return NextResponse.json({ error: "This workspace doesn't exist." }, { status: 404 });
   }
-  const workspaceLimits = workspaceSnap.data()?.limits as
-    | { enabledFeatures?: string[]; maxAIRequestsPerMonth?: number }
-    | undefined;
-  if (!workspaceLimits?.enabledFeatures?.includes("aiStudio")) {
+
+  // SECURITY (audit Priority 1): the feature gate and quota ceiling
+  // used to read workspaceSnap.data()?.limits directly — a cached
+  // field firestore.rules' workspaces/{id} update rule does NOT
+  // protect from a direct client write by any owner/admin (only
+  // projectCount/memberCount are protected there). That let a
+  // workspace owner/admin self-grant AI Studio access and an
+  // effectively unlimited quota by writing to their own workspace doc
+  // via the Firestore SDK directly, bypassing this route's checks
+  // entirely. Resolved live instead, from the real subscription +
+  // platform plan config — the same authoritative source
+  // workspaceQuota.ts and /api/projects/restore already use, via the
+  // shared resolveWorkspaceEntitlements helper — never the cache.
+  let liveLimits: { enabledFeatures: string[]; maxAIRequestsPerMonth: number };
+  try {
+    const entitlements = await resolveWorkspaceEntitlements(workspaceId);
+    liveLimits = {
+      enabledFeatures: entitlements.limits.enabledFeatures,
+      maxAIRequestsPerMonth: entitlements.limits.maxAIRequestsPerMonth,
+    };
+  } catch (err) {
+    console.error("[ai-studio/generate] failed to resolve live entitlements:", err);
+    // Fail closed — never fall back to trusting the cached, client-writable fields.
+    return NextResponse.json({ error: "Couldn't verify this workspace's plan. Try again in a moment." }, { status: 503 });
+  }
+
+  if (!liveLimits.enabledFeatures.includes("aiStudio")) {
     return NextResponse.json({ error: "AI Studio isn't included in this workspace's current plan." }, { status: 403 });
   }
 
   try {
-    await checkAndIncrementAIUsage(workspaceId, workspaceLimits.maxAIRequestsPerMonth ?? 0);
+    await checkAndIncrementAIUsage(workspaceId, liveLimits.maxAIRequestsPerMonth);
   } catch (err) {
     if (err instanceof AIQuotaExceededError) {
       return NextResponse.json({ error: err.message }, { status: 429 });

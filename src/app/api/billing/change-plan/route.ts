@@ -3,7 +3,8 @@ import { verifyRequestAuth, AuthVerificationError, adminDb } from "@/lib/server/
 import { applySubscriptionUpdate, getSubscriptionAdmin } from "@/lib/server/billingAdmin";
 import { logPlatformAudit } from "@/lib/server/platformAudit";
 import { enforceRateLimit, RateLimitExceededError } from "@/lib/server/rateLimit";
-import { PLAN_LIMITS } from "@/lib/constants/planLimits";
+import { mergePlanConfig } from "@/lib/planConfig";
+import type { PlatformPlanConfig } from "@/types/platformConfig.types";
 import type { WorkspacePlan } from "@/types/workspace.types";
 
 export const runtime = "nodejs";
@@ -57,13 +58,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Only workspace owners and admins can change the plan." }, { status: 403 });
   }
 
-  const existing = await getSubscriptionAdmin(workspaceId);
-  const targetLimits = PLAN_LIMITS[planId as WorkspacePlan];
-
-  const [memberCountSnap, projectCountSnap] = await Promise.all([
+  const [existing, planConfigSnap, memberCountSnap, projectCountSnap] = await Promise.all([
+    getSubscriptionAdmin(workspaceId),
+    adminDb().collection("platform_config").doc("plans").get(),
     adminDb().collection("members").where("workspaceId", "==", workspaceId).count().get(),
     adminDb().collection("projects").where("workspaceId", "==", workspaceId).where("isArchived", "==", false).count().get(),
   ]);
+  // SECURITY (audit Priority 8): resolved from the LIVE, Super-Admin-
+  // editable platform_config/plans doc (the same mergePlanConfig
+  // function resolveEntitlements/workspaceQuota.ts use) rather than
+  // the static PLAN_LIMITS constant — a Super Admin editing a plan's
+  // limits via Super Admin > Plans used to have no effect on this
+  // specific downgrade-safety check until the next deploy, which could
+  // let a downgrade proceed against limits nobody currently intends.
+  const targetLimits = mergePlanConfig(planConfigSnap.exists ? (planConfigSnap.data() as PlatformPlanConfig) : null).limits[
+    planId as WorkspacePlan
+  ];
   const memberCount = memberCountSnap.data().count;
   const projectCount = projectCountSnap.data().count;
 

@@ -62,6 +62,16 @@ export interface WorkspaceSubscription extends Timestamps {
   customEntitlements: Partial<WorkspacePlanLimits> | null;
   /** uid of whoever last changed this record (an owner requesting a plan, or the Super Admin account activating one) — audit trail, not read for access control. */
   updatedBy: ID | null;
+  /**
+   * The provider event timestamp (ISO string) of the last WEBHOOK
+   * event actually applied to this subscription — null until the
+   * first webhook event lands (manual/Super-Admin actions never set
+   * this). Used ONLY for out-of-order protection (see
+   * applySubscriptionUpdateIdempotent in billingAdmin.ts): a later-
+   * arriving webhook event whose OWN timestamp is older than this is
+   * rejected rather than overwriting newer state with stale data.
+   */
+  lastEventTimestamp: string | null;
 }
 
 export type SalesLeadStatus = "new" | "contacted" | "qualified" | "proposal" | "won" | "lost";

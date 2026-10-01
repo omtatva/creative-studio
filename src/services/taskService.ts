@@ -9,6 +9,7 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
+import { getCurrentUser } from "@/lib/firebase/auth";
 import { tasksCol, taskDoc } from "@/lib/firebase/firestore";
 import { logTaskActivity, deleteAllTaskActivity } from "@/services/taskActivityService";
 import { logActivity } from "@/services/activityService";
@@ -29,7 +30,30 @@ import { TaskStatusOption } from "@/types/settings.types";
  * `workspaceId` and either filters by it or re-validates a fetched
  * doc against it before proceeding — same enforcement pattern as
  * projectService.ts, matching firebase-config/firestore.rules.
+ *
+ * SECURITY (audit Priority 2): descriptionHtml is rich text rendered
+ * via dangerouslySetInnerHTML (TaskOverviewTab.tsx) — a direct
+ * Firestore write for it is no longer allowed (see firestore.rules'
+ * tasks/{taskId} rules) since nothing there could sanitize its
+ * content. createTask/updateTask always write "" for this field in
+ * their own direct Firestore call, then route the REAL value through
+ * /api/tasks/description (server-side sanitized) as a follow-up step —
+ * every other task field is completely unaffected.
  */
+async function setTaskDescription(taskId: string, descriptionHtml: string): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error("You must be signed in.");
+  const idToken = await user.getIdToken();
+  const response = await fetch("/api/tasks/description", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ taskId, descriptionHtml }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error ?? "Couldn't save the task description.");
+  }
+}
 
 interface CreateTaskArgs {
   workspaceId: string;
@@ -47,7 +71,10 @@ export async function createTask({ workspaceId, projectId, reporter, payload }: 
     workspaceId,
     projectId,
     title: payload.title,
-    descriptionHtml: payload.descriptionHtml,
+    // Always "" here — see setTaskDescription below, called right
+    // after this doc is committed, so the real value is never written
+    // via this direct, un-sanitized path.
+    descriptionHtml: "",
     assignee: payload.assignee,
     reporter,
     statusId: payload.statusId,
@@ -78,6 +105,10 @@ export async function createTask({ workspaceId, projectId, reporter, payload }: 
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
+
+  if (payload.descriptionHtml) {
+    await setTaskDescription(taskId, payload.descriptionHtml);
+  }
 
   await logTaskActivity(taskId, reporter, "task_created", `created this task`);
   await logActivity(workspaceId, {
@@ -131,7 +162,17 @@ export async function updateTask(
   const existing = await getTask(workspaceId, taskId);
   if (!existing) throw new Error("Task not found in this workspace.");
 
-  await updateDoc(taskDoc(taskId), { ...patch, updatedAt: serverTimestamp() } as never);
+  // descriptionHtml is pulled out of the direct update and routed
+  // through the sanitizing server endpoint instead — see
+  // setTaskDescription's doc comment above. Every other field in
+  // `patch` still updates exactly as before.
+  const { descriptionHtml, ...rest } = patch;
+  if (Object.keys(rest).length > 0) {
+    await updateDoc(taskDoc(taskId), { ...rest, updatedAt: serverTimestamp() } as never);
+  }
+  if (descriptionHtml !== undefined) {
+    await setTaskDescription(taskId, descriptionHtml);
+  }
   await logTaskActivity(taskId, actor, "task_updated", "updated task details");
 }
 
@@ -285,6 +326,12 @@ export async function duplicateTask(workspaceId: string, taskId: string, actor: 
     ...existing,
     id: newRef.id,
     title: `${existing.title} (Copy)`,
+    // Always "" in this direct write — see setTaskDescription below.
+    // The original's descriptionHtml was already sanitized when IT was
+    // first written, but the create rule requires every direct-client
+    // task creation to start empty regardless, so this follows the
+    // exact same two-step path createTask uses.
+    descriptionHtml: "",
     isArchived: false,
     isCompleted: false,
     checklist: existing.checklist.map((item) => ({ ...item, isCompleted: false, completedAt: null, completedBy: null })),
@@ -299,6 +346,9 @@ export async function duplicateTask(workspaceId: string, taskId: string, actor: 
   };
 
   await setDoc(newRef, { ...duplicate, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+  if (existing.descriptionHtml) {
+    await setTaskDescription(newRef.id, existing.descriptionHtml);
+  }
   await logTaskActivity(newRef.id, actor, "task_created", `duplicated from "${existing.title}"`);
 
   return newRef.id;

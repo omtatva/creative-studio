@@ -5,10 +5,11 @@ import { resyncSlotCount, type QuotaMetric } from "@/lib/server/workspaceQuota";
 export const runtime = "nodejs";
 
 /**
- * Recomputes workspaces/{id}.projectCount or .memberCount from a real
- * aggregate count — called (best-effort, fire-and-forget from the
- * client) after archiving/restoring-a-failure-cleanup/deleting a
- * project, or removing a member. Deliberately NOT a "decrement by 1"
+ * Recomputes workspaces/{id}.projectCount, .memberCount, or
+ * .storageBytesUsed from a real aggregate count/sum — called (best-
+ * effort, fire-and-forget from the client) after archiving/restoring-
+ * a-failure-cleanup/deleting a project, removing a member, or deleting
+ * a file. Deliberately NOT a "decrement by 1"
  * endpoint — see workspaceQuota.ts's resyncSlotCount doc comment for
  * why: an absolute resync has no abuse surface (calling it any number
  * of times just converges the counter to the truth), while a blind
@@ -36,8 +37,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
   const { workspaceId, metric } = body;
-  if (!workspaceId || (metric !== "project" && metric !== "member")) {
-    return NextResponse.json({ error: "A valid workspaceId and metric ('project' or 'member') are required." }, { status: 400 });
+  if (!workspaceId || (metric !== "project" && metric !== "member" && metric !== "storage")) {
+    return NextResponse.json({ error: "A valid workspaceId and metric ('project', 'member', or 'storage') are required." }, { status: 400 });
   }
 
   const memberSnap = await adminDb().collection("members").doc(`${workspaceId}_${uid}`).get();

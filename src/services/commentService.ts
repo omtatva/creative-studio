@@ -1,14 +1,39 @@
-import { deleteDoc, doc, getDoc, getDocs, increment, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
+import { deleteDoc, getDocs, increment, updateDoc } from "firebase/firestore";
+import { getCurrentUser } from "@/lib/firebase/auth";
 import { taskCommentsCol, taskCommentDoc, taskDoc } from "@/lib/firebase/firestore";
 import { logTaskActivity } from "@/services/taskActivityService";
-import { TaskActor, TaskComment } from "@/types/task.types";
+import { TaskActor } from "@/types/task.types";
 
 /**
  * Comment CRUD for a single task's `comments` subcollection.
  * Mentions are parsed by the caller (RichTextEditor / TaskCommentsTab)
  * before this is called — this layer just persists the resulting
  * `mentionedUids` alongside the rich HTML body.
+ *
+ * SECURITY (audit Priority 2): create/edit go through server API
+ * routes now, not a direct Firestore write — bodyHtml is rich text
+ * rendered via dangerouslySetInnerHTML elsewhere, and only the server
+ * can be trusted to sanitize it before persistence (see
+ * lib/utils/htmlSanitizer.ts and firestore.rules' comments create/
+ * update rules, now `if false`). Delete is unaffected — it carries no
+ * HTML and stays a direct client write.
  */
+
+async function callTaskApi<T>(path: string, body: unknown): Promise<T> {
+  const user = getCurrentUser();
+  if (!user) throw new Error("You must be signed in.");
+  const idToken = await user.getIdToken();
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error ?? "Request failed.");
+  }
+  return data as T;
+}
 
 interface AddCommentArgs {
   taskId: string;
@@ -19,20 +44,15 @@ interface AddCommentArgs {
 }
 
 export async function addComment({ taskId, author, bodyHtml, mentionedUids, parentCommentId }: AddCommentArgs): Promise<string> {
-  const commentRef = doc(taskCommentsCol(taskId));
-
-  const comment: Omit<TaskComment, "createdAt" | "updatedAt"> = {
-    id: commentRef.id,
-    authorId: author.uid,
-    author,
+  const { commentId } = await callTaskApi<{ commentId: string }>("/api/tasks/comments/create", {
+    taskId,
     bodyHtml,
     mentionedUids,
     parentCommentId,
-    isEdited: false,
-  };
-
-  await setDoc(commentRef, { ...comment, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
-  await updateDoc(taskDoc(taskId), { commentCount: increment(1) });
+    displayName: author.displayName,
+    photoURL: author.photoURL,
+    email: author.email,
+  });
 
   await logTaskActivity(
     taskId,
@@ -42,14 +62,11 @@ export async function addComment({ taskId, author, bodyHtml, mentionedUids, pare
     mentionedUids.length ? { mentions: String(mentionedUids.length) } : undefined
   );
 
-  return commentRef.id;
+  return commentId;
 }
 
 export async function editComment(taskId: string, commentId: string, bodyHtml: string, actor: TaskActor): Promise<void> {
-  const snapshot = await getDoc(taskCommentDoc(taskId, commentId));
-  if (!snapshot.exists()) throw new Error("Comment not found.");
-
-  await updateDoc(taskCommentDoc(taskId, commentId), { bodyHtml, isEdited: true, updatedAt: serverTimestamp() });
+  await callTaskApi("/api/tasks/comments/update", { taskId, commentId, bodyHtml });
   await logTaskActivity(taskId, actor, "comment_edited", "edited a comment");
 }
 

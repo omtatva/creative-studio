@@ -228,7 +228,7 @@ export default function AISettingsPage() {
           canManageWorkspace={canManageWorkspace}
         />
       ) : (
-        <OllamaConfigSection key={activeProviderMeta.id} draft={draft} setDraft={setDraft} canManageWorkspace={canManageWorkspace} />
+        <OllamaConfigSection key={activeProviderMeta.id} draft={draft} setDraft={setDraft} canManageWorkspace={canManageWorkspace} workspaceId={workspaceId} />
       )}
 
       <SettingsSection
@@ -413,6 +413,7 @@ interface OllamaConfigSectionProps {
   draft: AISettings;
   setDraft: (next: AISettings) => void;
   canManageWorkspace: boolean;
+  workspaceId: string | null;
 }
 
 /**
@@ -423,7 +424,7 @@ interface OllamaConfigSectionProps {
  * providers use) plus a real "Test Connection" that hits that server.
  * Only ever mounted while Ollama is the selected provider.
  */
-function OllamaConfigSection({ draft, setDraft, canManageWorkspace }: OllamaConfigSectionProps) {
+function OllamaConfigSection({ draft, setDraft, canManageWorkspace, workspaceId }: OllamaConfigSectionProps) {
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
@@ -437,7 +438,7 @@ function OllamaConfigSection({ draft, setDraft, canManageWorkspace }: OllamaConf
       const response = await fetch("/api/settings/ai-key/test", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
-        body: JSON.stringify({ provider: "ollama", baseUrl: draft.ollamaBaseUrl, model: draft.defaultModel }),
+        body: JSON.stringify({ provider: "ollama", baseUrl: draft.ollamaBaseUrl, model: draft.defaultModel, workspaceId }),
       });
       const data = await response.json().catch(() => ({}));
       setTestResult(

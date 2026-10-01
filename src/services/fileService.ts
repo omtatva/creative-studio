@@ -9,13 +9,37 @@ import {
 } from "@/lib/firebase/storage";
 import { ref } from "firebase/storage";
 import { storage } from "@/lib/firebase/config";
+import { getCurrentUser } from "@/lib/firebase/auth";
 import { logActivity } from "@/services/activityService";
 import { addFileToStage, getOrCreateDefaultStage } from "@/services/stageService";
 import { assetTypeFromContentType } from "@/lib/constants/creativeFiles";
-import { DEFAULT_ASSET_STATUS_ID } from "@/lib/constants/assetOptions";
 import { captureVideoThumbnail, readMediaDuration } from "@/lib/utils/videoThumbnail";
 import { AssetStatus, FileShareSettings, FileShareVisibility, FileSharePermission, ProjectFile } from "@/types/file.types";
 import { TaskActor } from "@/types/task.types";
+
+/**
+ * SECURITY (audit Priority 4): a completed Storage upload no longer
+ * automatically becomes a counted, usable file — see
+ * /api/files/finalize's doc comment. This is the one call every
+ * upload path routes through afterward; it independently re-verifies
+ * the object's real size and the workspace's live storage quota
+ * server-side before the Firestore record is created.
+ */
+async function finalizeUpload(body: Record<string, unknown>): Promise<{ fileId: string; sizeBytes: number }> {
+  const user = getCurrentUser();
+  if (!user) throw new Error("You must be signed in.");
+  const idToken = await user.getIdToken();
+  const response = await fetch("/api/files/finalize", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error ?? "Couldn't save this upload.");
+  }
+  return data;
+}
 
 /**
  * Project-level file storage — the "Files" module, shared unchanged
@@ -55,8 +79,7 @@ export async function uploadProjectFile(
   // forgets to pass a stageId.
   const stageId = requestedStageId ?? newVersionOf?.stageId ?? (await getOrCreateDefaultStage(workspaceId, projectId, uploadedBy));
 
-  const docRef = doc(filesCol());
-  const fileId = docRef.id;
+  const fileId = doc(filesCol()).id;
   const fileRef = projectAssetRef(workspaceId, projectId, fileId, file.name);
 
   const url = onProgress
@@ -89,35 +112,32 @@ export async function uploadProjectFile(
   const assetGroupId = newVersionOf?.assetGroupId ?? fileId;
   const versionNumber = newVersionOf ? newVersionOf.versionNumber + 1 : 1;
 
-  const record: Omit<ProjectFile, "createdAt" | "updatedAt"> = {
-    id: fileId,
+  // The actual Firestore record is created server-side now (see
+  // finalizeUpload's doc comment) — this call independently re-verifies
+  // the uploaded object's real size and the workspace's live storage
+  // quota before the file becomes real/counted/visible. The fields
+  // below are the same ones the old direct setDoc() used to write;
+  // assetType/statusId are recomputed server-side from verified data
+  // rather than trusted from this payload.
+  await finalizeUpload({
     workspaceId,
     projectId,
+    fileId,
     fileName: file.name,
-    originalName: file.name,
     contentType: file.type || "application/octet-stream",
-    assetType,
-    sizeBytes: file.size,
+    storagePath: fileRef.fullPath,
     url,
     thumbnailUrl,
-    storagePath: fileRef.fullPath,
-    uploadedBy,
-    reviewStatus: "none",
-    statusId: DEFAULT_ASSET_STATUS_ID,
     stageId,
     assetGroupId,
     versionNumber,
     previousVersionId: newVersionOf?.id ?? null,
-    isLatestVersion: true,
     durationSeconds,
-    shareSettings: null,
-  };
-
-  await setDoc(docRef, { ...record, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
-  await updateDoc(settingsDoc(workspaceId), { "storage.usedBytes": increment(file.size) } as never);
+    newVersionOfId: newVersionOf?.id ?? null,
+    uploadedBy,
+  });
 
   if (newVersionOf) {
-    await updateDoc(fileDoc(newVersionOf.id), { isLatestVersion: false, updatedAt: serverTimestamp() });
     await logActivity(workspaceId, {
       actorId: uploadedBy.uid,
       actorName: uploadedBy.displayName,
@@ -306,6 +326,12 @@ export async function deleteProjectFile(workspaceId: string, fileId: string, act
 
   await deleteDoc(fileDoc(fileId));
   await updateDoc(settingsDoc(workspaceId), { "storage.usedBytes": increment(-existing.sizeBytes) } as never);
+  // Authoritative counter resync (audit Priority 4) — mirrors the
+  // project/member pattern exactly: an absolute recompute from a real
+  // aggregate, never a blind decrement, so this stays safe to call
+  // even if it somehow ran twice. Fire-and-forget: the file is already
+  // deleted above regardless of whether this succeeds.
+  void resyncStorageCount(workspaceId);
   await logActivity(workspaceId, {
     actorId: actor.uid,
     actorName: actor.displayName,
@@ -313,4 +339,19 @@ export async function deleteProjectFile(workspaceId: string, fileId: string, act
     targetType: "file",
     targetId: fileId,
   });
+}
+
+async function resyncStorageCount(workspaceId: string): Promise<void> {
+  try {
+    const user = getCurrentUser();
+    if (!user) return;
+    const idToken = await user.getIdToken();
+    await fetch("/api/workspaces/resync-count", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+      body: JSON.stringify({ workspaceId, metric: "storage" }),
+    });
+  } catch (err) {
+    console.error("[fileService] storage-count resync failed (non-fatal):", err);
+  }
 }

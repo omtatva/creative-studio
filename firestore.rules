@@ -200,9 +200,28 @@ service cloud.firestore {
     // create-vs-update distinction), which is what actually enforces
     // uniqueness — a second attempt at the same slug hits `update`
     // (since the doc now exists) and is rejected.
+    //
+    // SECURITY (audit Priority 7): the referenced workspaceId must NOT
+    // already belong to an existing workspace — without this, any
+    // signed-in user could create a slug pointing workspaceId at
+    // someone ELSE's real workspace (squatting a memorable name against
+    // a workspace they have no relation to). This can't require actual
+    // OWNERSHIP of that workspaceId (isWorkspaceOwner/isWorkspaceMemberWithRole)
+    // the way most other bootstrap rules in this file do, because
+    // workspaceService.createWorkspace() reserves the slug BEFORE the
+    // workspaces/{id} and members/{id}_{ownerId} docs exist — neither
+    // is available to check against yet at this exact step, the same
+    // chicken-and-egg problem the `members` collection's owner-bootstrap
+    // clause exists for. Requiring the workspace to NOT already exist is
+    // the strongest check available at this point in the sequence: it
+    // fully closes "claim a slug for an EXISTING victim workspace" (the
+    // actual exploit), while still allowing the legitimate flow, where
+    // the new workspace doesn't exist yet either.
     match /workspace_slugs/{slug} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.resource.data.slug == slug;
+      allow create: if isSignedIn()
+        && request.resource.data.slug == slug
+        && !exists(/databases/$(database)/documents/workspaces/$(request.resource.data.workspaceId));
       allow update, delete: if false;
     }
 
@@ -236,17 +255,20 @@ service cloud.firestore {
       // workspace they don't personally belong to. Still real deletion
       // (see deleteWorkspaceAccess in workspaceService.ts), not
       // frontend-hidden — this is the actual enforcement.
-      // SECURITY (workspace-quota audit): projectCount/memberCount are
-      // the authoritative counters /api/projects/* and
-      // /api/invites/accept check atomically before allowing a create
-      // — without this exclusion, an owner/admin could just set them
-      // to 0 directly (this rule otherwise allows any field change)
-      // and defeat the entire mechanism. Admin-SDK-write-only for
-      // these two fields specifically; every other field (name, logo,
-      // limits, ...) is unaffected — unchanged from before.
+      // SECURITY (workspace-quota audit, extended for storage in the
+      // Priority-4 security-audit-fixes pass): projectCount/
+      // memberCount/storageBytesUsed are the authoritative counters
+      // /api/projects/*, /api/invites/accept, and /api/files/finalize
+      // check atomically before allowing a create/upload — without
+      // this exclusion, an owner/admin could just set them directly
+      // (this rule otherwise allows any field change) and defeat the
+      // entire mechanism. Admin-SDK-write-only for these three fields
+      // specifically; every other field (name, logo, limits, ...) is
+      // unaffected — unchanged from before.
       allow update: if isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin'])
         && request.resource.data.get('projectCount', null) == resource.data.get('projectCount', null)
-        && request.resource.data.get('memberCount', null) == resource.data.get('memberCount', null);
+        && request.resource.data.get('memberCount', null) == resource.data.get('memberCount', null)
+        && request.resource.data.get('storageBytesUsed', null) == resource.data.get('storageBytesUsed', null);
       allow delete: if isWorkspaceOwner(workspaceId) || isSuperAdmin();
 
       match /activity_logs/{logId} {
@@ -594,9 +616,18 @@ service cloud.firestore {
     // workspaceId/projectId field on every subdocument.
     match /tasks/{taskId} {
       allow read: if canAccessProject(resource.data.workspaceId, resource.data.projectId);
-      allow create: if canWriteProject(request.resource.data.workspaceId, request.resource.data.projectId);
+      // SECURITY (audit Priority 2): descriptionHtml is rich text
+      // rendered via dangerouslySetInnerHTML — nothing here can
+      // sanitize its content, only gate who's allowed to write it.
+      // Create must always start with an empty description; any real
+      // value goes through POST /api/tasks/description (server-side
+      // sanitized — see lib/utils/htmlSanitizer.ts) as a follow-up
+      // write, which is Admin-SDK and bypasses this rule entirely.
+      allow create: if canWriteProject(request.resource.data.workspaceId, request.resource.data.projectId)
+        && request.resource.data.descriptionHtml == '';
       allow update: if canWriteProject(resource.data.workspaceId, resource.data.projectId)
-        && request.resource.data.workspaceId == resource.data.workspaceId;
+        && request.resource.data.workspaceId == resource.data.workspaceId
+        && request.resource.data.descriptionHtml == resource.data.descriptionHtml;
       allow delete: if canWriteProject(resource.data.workspaceId, resource.data.projectId);
 
       function isParentTaskMember() {
@@ -604,9 +635,18 @@ service cloud.firestore {
         return canAccessProject(parent.workspaceId, parent.projectId);
       }
 
+      // SECURITY (audit Priority 2): bodyHtml is rich text rendered
+      // via dangerouslySetInnerHTML — create/update now go ONLY through
+      // POST /api/tasks/comments/create and /update (server-side
+      // sanitized), which re-verify the exact same authorization bar
+      // this rule used to enforce directly (isParentTaskMember for
+      // create — any project role, including viewer; author-only for
+      // edits) before writing via the Admin SDK. Read and delete are
+      // unaffected — deleting carries no HTML and stays a direct write.
       match /comments/{commentId} {
-        allow read, create: if isParentTaskMember();
-        allow update, delete: if isParentTaskMember()
+        allow read: if isParentTaskMember();
+        allow create, update: if false;
+        allow delete: if isParentTaskMember()
           && (resource.data.authorId == request.auth.uid || resource == null);
       }
 
@@ -685,8 +725,17 @@ service cloud.firestore {
       // the file record itself (that stays canWriteProject-gated, same as
       // always, so only a real project member/admin can toggle sharing
       // on/off in the first place).
+      // SECURITY (audit Priority 4): create is now server-only — see
+      // /api/files/finalize. A direct client create could never be
+      // trusted to enforce the workspace storage quota (Firestore
+      // rules have no aggregate-sum primitive, the same limitation
+      // that already forced projects/{id}'s create to if false), and
+      // a client could freely claim any sizeBytes it wanted. Raw bytes
+      // still upload directly to Storage from the browser exactly as
+      // before — only the Firestore record (and the workspace's
+      // storage counter) is now admin-SDK-only.
       allow read: if canAccessProject(resource.data.workspaceId, resource.data.projectId) || isSharedFile(resource.data);
-      allow create: if canWriteProject(request.resource.data.workspaceId, request.resource.data.projectId);
+      allow create: if false;
       allow update: if canWriteProject(resource.data.workspaceId, resource.data.projectId)
         && request.resource.data.workspaceId == resource.data.workspaceId;
       allow delete: if canWriteProject(resource.data.workspaceId, resource.data.projectId);

@@ -80,6 +80,7 @@ async function applySubscriptionUpdateInTransaction(
         trialEnd: null,
         customEntitlements: null,
         updatedBy: null,
+        lastEventTimestamp: null,
         createdAt: now,
         updatedAt: now,
       };
@@ -115,34 +116,76 @@ async function applySubscriptionUpdateInTransaction(
  * The idempotency doc's `applied` payload lets a genuine duplicate
  * return the same response the original call did, rather than an
  * empty/ambiguous "already processed" with no data.
+ *
+ * SECURITY (audit Priority 5) — out-of-order protection: `eventTimestamp`
+ * is the provider's own event time (every real provider — Stripe's
+ * `created`, Razorpay's `created_at`, etc. — supplies one; the current
+ * development-safe shared-secret webhook requires the caller to send
+ * it too, see /api/billing/webhook). Before applying, this compares it
+ * against `lastEventTimestamp` already stored on the subscription — an
+ * event that's OLDER than one already applied is rejected rather than
+ * silently overwriting newer state with stale data (e.g. a late-
+ * arriving "payment_succeeded" retry landing after a subsequent
+ * "subscription_canceled" already processed). Rejected-as-stale events
+ * are still recorded in the idempotency ledger so a retry of THAT
+ * exact stale event also short-circuits instead of being evaluated
+ * twice.
  */
 export async function applySubscriptionUpdateIdempotent(
   eventId: string,
   workspaceId: string,
-  patch: Partial<Omit<WorkspaceSubscription, "workspaceId" | "createdAt">>
-): Promise<{ subscription: WorkspaceSubscription; duplicate: boolean }> {
+  patch: Partial<Omit<WorkspaceSubscription, "workspaceId" | "createdAt">>,
+  eventTimestamp: string
+): Promise<{ subscription: WorkspaceSubscription; duplicate: boolean; outOfOrder: boolean }> {
   const eventRef = webhookEventRef(eventId);
 
   return adminDb().runTransaction(async (tx) => {
     const eventSnap = await tx.get(eventRef);
     if (eventSnap.exists) {
       const applied = eventSnap.data()?.appliedSubscription as WorkspaceSubscription | undefined;
-      if (applied) return { subscription: applied, duplicate: true };
+      if (applied) return { subscription: applied, duplicate: true, outOfOrder: Boolean(eventSnap.data()?.outOfOrder) };
       // Idempotency doc exists but somehow has no payload (shouldn't
       // happen) — fail closed rather than silently reapplying.
       throw new Error(`Webhook event ${eventId} was already recorded but has no stored result.`);
     }
 
-    const subscription = await applySubscriptionUpdateInTransaction(tx, workspaceId, patch, null);
+    const subRef = subscriptionRef(workspaceId);
+    const currentSnap = await tx.get(subRef);
+    const current = currentSnap.exists ? (currentSnap.data() as WorkspaceSubscription) : null;
+
+    const isOutOfOrder = !!current?.lastEventTimestamp && eventTimestamp < current.lastEventTimestamp;
+
+    if (isOutOfOrder) {
+      // Record the rejection (for idempotency + auditability) without
+      // touching the subscription at all — the already-applied, newer
+      // state stands.
+      tx.set(eventRef, {
+        eventId,
+        workspaceId,
+        processedAt: FieldValue.serverTimestamp(),
+        outOfOrder: true,
+        rejectedEventTimestamp: eventTimestamp,
+        appliedSubscription: current,
+      });
+      return { subscription: current as WorkspaceSubscription, duplicate: false, outOfOrder: true };
+    }
+
+    const subscription = await applySubscriptionUpdateInTransaction(
+      tx,
+      workspaceId,
+      { ...patch, lastEventTimestamp: eventTimestamp },
+      null
+    );
 
     tx.set(eventRef, {
       eventId,
       workspaceId,
       processedAt: FieldValue.serverTimestamp(),
+      outOfOrder: false,
       appliedSubscription: subscription,
     });
 
-    return { subscription, duplicate: false };
+    return { subscription, duplicate: false, outOfOrder: false };
   });
 }
 

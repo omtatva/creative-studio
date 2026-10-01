@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { RichTextEditor } from "@/components/tasks/RichTextEditor";
 import { TaskActor, TaskComment } from "@/types/task.types";
 import { timeAgo } from "@/lib/utils/date";
+import { sanitizeRichText } from "@/lib/utils/htmlSanitizer";
 
 interface CommentItemProps {
   comment: TaskComment;
@@ -49,7 +50,9 @@ export function CommentItem({ comment, currentUid, mentionCandidates, onReply, o
               </div>
             </div>
           ) : (
-            <div className="prose-editor mt-1 text-sm text-foreground" dangerouslySetInnerHTML={{ __html: comment.bodyHtml }} />
+            // Defense in depth (audit Priority 2): sanitized again here
+            // even though the server already sanitizes on write.
+            <div className="prose-editor mt-1 text-sm text-foreground" dangerouslySetInnerHTML={{ __html: sanitizeRichText(comment.bodyHtml) }} />
           )}
 
           {!isEditing && (

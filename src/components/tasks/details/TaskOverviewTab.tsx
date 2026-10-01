@@ -9,6 +9,7 @@ import { useTaskDetailsContext } from "@/contexts/TaskDetailsContext";
 import { useTask } from "@/hooks/useTask";
 import { formatDate, isOverdue } from "@/lib/utils/date";
 import { projectRoute, taskRoute } from "@/lib/constants/routes";
+import { sanitizeRichText } from "@/lib/utils/htmlSanitizer";
 
 /** Overview tab: rich description + the full metadata field set the spec calls out for every task. */
 export function TaskOverviewTab() {
@@ -25,7 +26,11 @@ export function TaskOverviewTab() {
             <CardTitle>Description</CardTitle>
           </CardHeader>
           {task.descriptionHtml ? (
-            <div className="prose-editor text-sm text-foreground" dangerouslySetInnerHTML={{ __html: task.descriptionHtml }} />
+            // Defense in depth (audit Priority 2): sanitized again here
+            // even though the server already sanitizes on write — this
+            // catches anything written before that fix existed, or by
+            // a future write path that misses it.
+            <div className="prose-editor text-sm text-foreground" dangerouslySetInnerHTML={{ __html: sanitizeRichText(task.descriptionHtml) }} />
           ) : (
             <p className="text-sm text-foreground-muted">No description yet.</p>
           )}

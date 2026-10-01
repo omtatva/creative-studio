@@ -7,6 +7,22 @@ import { TaskActor } from "@/types/task.types";
 
 const EMOJI_SET = ["👍", "🎉", "✅", "🔥", "👀", "❤️", "😂", "🙌", "🚀", "💡", "⚠️", "🤔"];
 
+const SAFE_LINK_SCHEMES = ["http:", "https:", "mailto:"];
+
+/** Client-side pre-check for the Link toolbar button — see its onClick for why this is UX-only, not the real security boundary. */
+function isSafeLinkUrl(url: string): boolean {
+  try {
+    // A relative URL (no explicit scheme) resolves against the current
+    // page's own origin here, so it always comes back http/https —
+    // only an ABSOLUTE javascript:/data:/vbscript: URL fails this.
+    const parsed = new URL(url, window.location.origin);
+    return SAFE_LINK_SCHEMES.includes(parsed.protocol);
+  } catch {
+    // A genuinely malformed string — let it through; execCommand("createLink") will just fail to produce a usable link.
+    return true;
+  }
+}
+
 interface RichTextEditorProps {
   value: string;
   onChange: (html: string) => void;
@@ -112,7 +128,18 @@ export function RichTextEditor({
           label="Insert link"
           onClick={() => {
             const url = window.prompt("Link URL");
-            if (url) runCommand("createLink", url);
+            if (!url) return;
+            // Immediate UX feedback only — the real enforcement is
+            // server-side sanitization (see lib/utils/htmlSanitizer.ts,
+            // used by /api/tasks/description and /api/tasks/comments/*),
+            // which strips any scheme outside http/https/mailto
+            // regardless of what makes it into this editor's own
+            // contentEditable HTML.
+            if (!isSafeLinkUrl(url)) {
+              window.alert("That link type isn't allowed. Use an http://, https://, or mailto: link.");
+              return;
+            }
+            runCommand("createLink", url);
           }}
         />
         <div className="relative ml-auto">

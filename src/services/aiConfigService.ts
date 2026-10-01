@@ -33,7 +33,7 @@ export async function saveWorkspaceAIKey(workspaceId: string, provider: AIProvid
   const response = await fetch("/api/settings/ai-key/encrypt", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
-    body: JSON.stringify({ apiKey: trimmed }),
+    body: JSON.stringify({ apiKey: trimmed, workspaceId }),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -70,7 +70,7 @@ export async function testWorkspaceAIConnection(workspaceId: string, provider: A
     const response = await fetch("/api/settings/ai-key/test", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
-      body: JSON.stringify({ provider, ciphertext: config.ciphertext, iv: config.iv, authTag: config.authTag }),
+      body: JSON.stringify({ provider, ciphertext: config.ciphertext, iv: config.iv, authTag: config.authTag, workspaceId }),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {

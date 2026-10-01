@@ -1,10 +1,7 @@
 import "server-only";
-import { FieldValue, Transaction } from "firebase-admin/firestore";
+import { AggregateField, FieldValue, Transaction } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/server/firebaseAdmin";
-import { mergePlanConfig } from "@/lib/planConfig";
-import type { PlatformPlanConfig } from "@/types/platformConfig.types";
-import type { WorkspaceSubscription } from "@/types/billing.types";
-import { resolveEntitlements } from "@/lib/entitlements";
+import { resolveWorkspaceEntitlements } from "@/lib/server/workspaceEntitlements";
 
 /**
  * Server-side, transaction-atomic maxMembers/maxProjects enforcement —
@@ -53,8 +50,8 @@ import { resolveEntitlements } from "@/lib/entitlements";
  *     no migration script, no forced workspace recreation.
  */
 
-export type QuotaMetric = "project" | "member";
-export type QuotaErrorCode = "PROJECT_LIMIT_REACHED" | "MEMBER_LIMIT_REACHED";
+export type QuotaMetric = "project" | "member" | "storage";
+export type QuotaErrorCode = "PROJECT_LIMIT_REACHED" | "MEMBER_LIMIT_REACHED" | "STORAGE_LIMIT_REACHED";
 
 export class WorkspaceQuotaError extends Error {
   code: QuotaErrorCode;
@@ -64,24 +61,34 @@ export class WorkspaceQuotaError extends Error {
   }
 }
 
-const COUNTER_FIELD: Record<QuotaMetric, "projectCount" | "memberCount"> = {
+// SECURITY (audit Priority 4): "storage" was added alongside the
+// existing project/member metrics — storageBytesUsed is the
+// authoritative, admin-SDK-write-only counter for the workspace
+// storage quota (see firestore.rules' workspaces/{id} update rule,
+// which now protects this field the exact same way it already
+// protected projectCount/memberCount). See /api/files/finalize for
+// where reserveBytes is actually called from.
+const COUNTER_FIELD: Record<QuotaMetric, "projectCount" | "memberCount" | "storageBytesUsed"> = {
   project: "projectCount",
   member: "memberCount",
+  storage: "storageBytesUsed",
 };
-const LIMIT_KEY: Record<QuotaMetric, "maxProjects" | "maxMembers"> = {
+const LIMIT_KEY: Record<QuotaMetric, "maxProjects" | "maxMembers" | "maxStorageBytes"> = {
   project: "maxProjects",
   member: "maxMembers",
+  storage: "maxStorageBytes",
 };
 const ERROR_CODE: Record<QuotaMetric, QuotaErrorCode> = {
   project: "PROJECT_LIMIT_REACHED",
   member: "MEMBER_LIMIT_REACHED",
+  storage: "STORAGE_LIMIT_REACHED",
 };
 
 function workspaceRef(workspaceId: string) {
   return adminDb().collection("workspaces").doc(workspaceId);
 }
 
-/** Real, current count of the underlying collection — used only for lazy backfill and resync, never on the hot atomic-check path (that reads the maintained counter field instead, which is O(1) rather than a collection scan). */
+/** Real, current count/sum of the underlying collection — used only for lazy backfill and resync, never on the hot atomic-check path (that reads the maintained counter field instead, which is O(1) rather than a collection scan/aggregate). */
 async function countReal(metric: QuotaMetric, workspaceId: string): Promise<number> {
   if (metric === "project") {
     const snap = await adminDb()
@@ -92,28 +99,35 @@ async function countReal(metric: QuotaMetric, workspaceId: string): Promise<numb
       .get();
     return snap.data().count;
   }
+  if (metric === "storage") {
+    // SUM aggregate over every file's real sizeBytes — a full scan of
+    // documents isn't needed (Firestore computes this server-side),
+    // but unlike .count() this reads every matched document's field,
+    // so it's still reserved for backfill/resync, never the hot path.
+    const snap = await adminDb()
+      .collection("files")
+      .where("workspaceId", "==", workspaceId)
+      .aggregate({ total: AggregateField.sum("sizeBytes") })
+      .get();
+    return snap.data().total ?? 0;
+  }
   const snap = await adminDb().collection("members").where("workspaceId", "==", workspaceId).count().get();
   return snap.data().count;
 }
 
 /**
- * Live, authoritative effective limits — resolved from the real
- * subscription doc + live plan config (mergePlanConfig/
- * resolveEntitlements, the exact same functions billingAdmin.ts uses),
- * NOT the cached workspace.limits field. This matters specifically
- * for a JUST-expired trial: the cache only re-syncs on the next real
- * subscription event, so trusting it here could let a workspace whose
- * trial ended seconds ago keep creating at the higher trial limit
- * until something else happens to trigger a resync.
+ * Live, authoritative effective limit — resolved from the real
+ * subscription doc + live plan config via resolveWorkspaceEntitlements
+ * (the same function every other authoritative billing/entitlement
+ * decision in this app uses now), NOT the cached workspace.limits
+ * field. This matters specifically for a JUST-expired trial: the cache
+ * only re-syncs on the next real subscription event, so trusting it
+ * here could let a workspace whose trial ended seconds ago keep
+ * creating/uploading at the higher trial limit until something else
+ * happens to trigger a resync.
  */
 async function resolveLiveLimit(workspaceId: string, metric: QuotaMetric): Promise<number> {
-  const [subSnap, planConfigSnap] = await Promise.all([
-    adminDb().collection("workspaces").doc(workspaceId).collection("billing").doc("subscription").get(),
-    adminDb().collection("platform_config").doc("plans").get(),
-  ]);
-  const subscription = subSnap.exists ? (subSnap.data() as WorkspaceSubscription) : null;
-  const planLimits = mergePlanConfig(planConfigSnap.exists ? (planConfigSnap.data() as PlatformPlanConfig) : null).limits;
-  const { limits } = resolveEntitlements(subscription, planLimits);
+  const { limits } = await resolveWorkspaceEntitlements(workspaceId);
   return limits[LIMIT_KEY[metric]];
 }
 
@@ -157,6 +171,38 @@ export async function reserveSlot(workspaceId: string, metric: QuotaMetric): Pro
     }
 
     tx.update(ref, { [field]: current + 1, updatedAt: FieldValue.serverTimestamp() });
+  });
+}
+
+/**
+ * Same atomicity guarantee as reserveSlot, generalized for an
+ * arbitrary byte amount instead of a fixed +1 — storage is reserved in
+ * however many bytes the file actually is, not in fixed-size "slots."
+ * See /api/files/finalize, the one caller: it resolves the REAL
+ * uploaded object size from Storage itself (never a client-supplied
+ * number) before calling this.
+ */
+export async function reserveStorageBytes(workspaceId: string, bytes: number): Promise<void> {
+  const limit = await resolveLiveLimit(workspaceId, "storage");
+  if (!Number.isFinite(limit)) return;
+
+  const field = COUNTER_FIELD.storage;
+  const ref = workspaceRef(workspaceId);
+  await ensureCounterInitialized(workspaceId, "storage");
+
+  await adminDb().runTransaction(async (tx: Transaction) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new Error(`Workspace ${workspaceId} not found.`);
+    const current = (snap.data()?.[field] as number | undefined) ?? 0;
+
+    if (current + bytes > limit) {
+      throw new WorkspaceQuotaError(
+        "STORAGE_LIMIT_REACHED",
+        `This upload would exceed this workspace's plan storage limit (${(limit / (1024 * 1024 * 1024)).toFixed(1)} GB).`
+      );
+    }
+
+    tx.update(ref, { [field]: current + bytes, updatedAt: FieldValue.serverTimestamp() });
   });
 }
 

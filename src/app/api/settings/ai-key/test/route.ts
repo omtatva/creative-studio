@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { verifyRequestAuth, AuthVerificationError } from "@/lib/server/firebaseAdmin";
+import { verifyRequestAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
 import { decryptSecret } from "@/lib/server/secretCrypto";
 import { generateNvidiaText, NvidiaApiError } from "@/lib/server/nvidiaClient";
 import { enforceRateLimit, RateLimitExceededError } from "@/lib/server/rateLimit";
@@ -15,6 +15,7 @@ interface TestRequestBody {
   /** Ollama only — a local server URL, not a secret, so no encryption is involved for this provider. */
   baseUrl?: string;
   model?: string;
+  workspaceId?: string;
 }
 
 /**
@@ -26,9 +27,17 @@ interface TestRequestBody {
  *
  * For Ollama: there is no key to decrypt — it checks that the given
  * local server URL actually responds, with no auth involved at all.
+ * Still bound to the same workspace-membership bar as the other
+ * providers below, for a uniform authorization story on this route —
+ * the actual risk it closes here is different (SSRF-shaped probing of
+ * an arbitrary URL through the server) but the fix is the same one.
  *
- * SECURITY: requires sign-in (verifyRequestAuth) — this had no auth
- * check at all before.
+ * SECURITY (audit Priority 6): requires sign-in AND real owner/admin
+ * membership in the claimed workspace — this previously required only
+ * sign-in, letting any authenticated user test/decrypt-and-verify a
+ * ciphertext blob fully decoupled from any workspace they actually
+ * belong to. Bound to the same bar ai_config's own Firestore write
+ * rule already enforces.
  */
 export async function POST(request: NextRequest) {
   let uid: string;
@@ -53,6 +62,15 @@ export async function POST(request: NextRequest) {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+
+  if (!body.workspaceId) {
+    return NextResponse.json({ error: "workspaceId is required." }, { status: 400 });
+  }
+  const memberSnap = await adminDb().collection("members").doc(`${body.workspaceId}_${uid}`).get();
+  const role = memberSnap.exists ? (memberSnap.data()?.role as string | undefined) : undefined;
+  if (!role || !["owner", "admin"].includes(role)) {
+    return NextResponse.json({ error: "Only workspace owners and admins can test AI provider connections." }, { status: 403 });
   }
 
   if (body.provider === "ollama") {
