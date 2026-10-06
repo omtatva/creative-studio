@@ -11,6 +11,21 @@ import { WorkspacePlan, WorkspacePlanLimits } from "./workspace.types";
 export type SubscriptionStatus = "trialing" | "active" | "past_due" | "canceled" | "incomplete" | "paused";
 
 /**
+ * The lifecycle of a SPECIFIC checkout attempt — deliberately separate
+ * from `SubscriptionStatus` (what the customer is currently entitled
+ * to) and `PaymentStatus` (whether money has actually moved). A
+ * subscription can sit at `status: "trialing"` with
+ * `checkoutStatus: "created"` at the same time — one checkout attempt
+ * resolving (completed/cancelled/failed) never by itself implies the
+ * subscription's own status changed; only a verified `paymentStatus:
+ * "paid"` does that (see billingAdmin.ts/webhook route).
+ */
+export type CheckoutStatus = "not_started" | "created" | "redirected" | "completed" | "cancelled" | "failed";
+
+/** Whether money has actually moved for the current/last checkout attempt — the ONLY thing that may ever flip a subscription to a genuinely paid `active` status. Never inferred from `status` or `checkoutStatus` alone. */
+export type PaymentStatus = "not_started" | "pending" | "paid" | "failed" | "cancelled" | "refunded";
+
+/**
  * "manual" means no real payment provider is connected yet — a plan
  * became active because an Omtatva admin (Super Admin) activated it
  * directly (see Enterprise sales-lead activation, or a Free/Pro/Business
@@ -72,6 +87,38 @@ export interface WorkspaceSubscription extends Timestamps {
    * rejected rather than overwriting newer state with stale data.
    */
   lastEventTimestamp: string | null;
+  /**
+   * A plan the owner picked while a DIFFERENT plan is still genuinely
+   * entitled (an active paid plan, or a trial that hasn't expired yet)
+   * — see /api/billing/change-plan's doc comment. Deliberately NOT the
+   * same thing as `status: "incomplete"` + `planId`: that combination
+   * means "no live entitlement to protect, fall back to free limits
+   * until paid," which is correct for a brand-new/lapsed/expired
+   * subscription but WRONG for someone mid-trial or already paying —
+   * this field lets a request be recorded and shown to Super Admin
+   * without touching `status`/`planId`/`trialEnd` at all, so the
+   * caller's CURRENT entitlement keeps applying, uninterrupted, until
+   * a real activation (webhook or Super Admin) clears this and sets
+   * the new plan for real. Null when there's no pending request.
+   */
+  requestedPlanId: WorkspacePlan | null;
+  /**
+   * Explicit evidence that THIS activation was a manual/complimentary
+   * one by Super Admin (see activatePlanManually) — written ONLY by that
+   * path. It is what lets Super Admin call an active subscription
+   * "Complimentary / Manual" rather than guess: an active subscription
+   * with neither this marker nor `paymentStatus: "paid"` (every record
+   * activated before this field existed, or by a provider event that
+   * reported no payment outcome) is "Legacy / Payment status unknown" —
+   * historical payment information is never fabricated, and existing
+   * records are never backfilled to make the display tidier. Absent on
+   * all legacy records.
+   */
+  activationSource?: "manual";
+  /** See CheckoutStatus's doc comment. "not_started" until the owner actually initiates a checkout/change-plan request. */
+  checkoutStatus: CheckoutStatus;
+  /** See PaymentStatus's doc comment. "not_started" until a checkout exists; only a webhook-verified event may ever set "paid". */
+  paymentStatus: PaymentStatus;
 }
 
 export type SalesLeadStatus = "new" | "contacted" | "qualified" | "proposal" | "won" | "lost";

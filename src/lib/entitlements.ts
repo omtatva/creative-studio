@@ -1,4 +1,4 @@
-import { PLAN_LIMITS, DEFAULT_PLAN } from "@/lib/constants/planLimits";
+import { PLAN_LIMITS, DEFAULT_PLAN, TRIAL_DAYS } from "@/lib/constants/planLimits";
 import type { WorkspacePlan, WorkspacePlanLimits } from "@/types/workspace.types";
 import type { SubscriptionStatus, WorkspaceSubscription } from "@/types/billing.types";
 
@@ -31,12 +31,40 @@ import type { SubscriptionStatus, WorkspaceSubscription } from "@/types/billing.
  */
 const ENTITLED_STATUSES: ReadonlySet<SubscriptionStatus> = new Set(["trialing", "active"]);
 
-export function isTrialExpired(subscription: Pick<WorkspaceSubscription, "status" | "trialEnd"> | null): boolean {
-  return !!subscription && subscription.status === "trialing" && !!subscription.trialEnd && new Date(subscription.trialEnd) < new Date();
+type TrialFields = Pick<WorkspaceSubscription, "status" | "trialEnd"> & Partial<Pick<WorkspaceSubscription, "trialStart">>;
+
+/**
+ * When a `trialing` subscription's trial ends — the ONE definition
+ * every expiry check (here, the display layer, the cache sync) uses.
+ *  1. An explicit `trialEnd` wins.
+ *  2. Legacy records with no `trialEnd` but a `trialStart`: that
+ *     timestamp + the fixed trial length (TRIAL_DAYS) — derived from
+ *     data the record already holds, not an arbitrary date.
+ *  3. Neither (or unparseable): null — there is NOT enough information
+ *     to establish an active trial. isTrialExpired treats that as
+ *     expired, so such a record can never grant Pro indefinitely.
+ */
+export function resolveTrialEnd(subscription: Pick<WorkspaceSubscription, "trialEnd"> & Partial<Pick<WorkspaceSubscription, "trialStart">>): string | null {
+  const explicit = subscription.trialEnd ? Date.parse(subscription.trialEnd) : NaN;
+  if (!Number.isNaN(explicit)) return new Date(explicit).toISOString();
+  const start = subscription.trialStart ? Date.parse(subscription.trialStart) : NaN;
+  if (!Number.isNaN(start)) return new Date(start + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  return null;
+}
+
+/**
+ * True for a `trialing` subscription that has ended (`trialEnd <= now`)
+ * OR whose end can't be established at all (see resolveTrialEnd) —
+ * fail closed: an unverifiable trial is not an active trial.
+ */
+export function isTrialExpired(subscription: TrialFields | null): boolean {
+  if (!subscription || subscription.status !== "trialing") return false;
+  const end = resolveTrialEnd(subscription);
+  return end === null || new Date(end).getTime() <= Date.now();
 }
 
 export function resolveEntitlements(
-  subscription: Pick<WorkspaceSubscription, "planId" | "status" | "customEntitlements" | "trialEnd"> | null,
+  subscription: (Pick<WorkspaceSubscription, "planId" | "status" | "customEntitlements" | "trialEnd"> & Partial<Pick<WorkspaceSubscription, "trialStart">>) | null,
   // Defaults to the static PLAN_LIMITS — callers that have already
   // fetched Super Admin > Plans' live overrides (see
   // lib/planConfig.ts's mergePlanConfig) pass those instead, so a
@@ -75,6 +103,9 @@ export const SUBSCRIPTION_STATUS_LABEL: Record<SubscriptionStatus, string> = {
   active: "Active",
   past_due: "Payment overdue",
   canceled: "Canceled",
-  incomplete: "Incomplete",
+  // "incomplete" is the persisted representation of "pending payment"
+  // (a paid plan was requested/checkout started, payment not confirmed)
+  // — labeled as what it means to a reader, never as "Active".
+  incomplete: "Pending payment",
   paused: "Paused",
 };

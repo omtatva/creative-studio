@@ -18,10 +18,18 @@ export function useFileComments(fileId: string | undefined) {
     }
     setIsLoading(true);
     const q = query(fileCommentsCol(fileId), orderBy("createdAt", "asc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setComments(snapshot.docs.map((d) => d.data()));
-      setIsLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        setComments(snapshot.docs.map((d) => d.data()));
+        setIsLoading(false);
+      },
+      (err) => {
+        console.error("[useFileComments] snapshot error:", err);
+        setComments([]);
+        setIsLoading(false);
+      }
+    );
     return unsubscribe;
   }, [fileId]);
 

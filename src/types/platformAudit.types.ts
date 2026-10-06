@@ -23,6 +23,13 @@ import { ID, Timestamps } from "./common.types";
  * Super Admin > Customers for those rows.
  */
 export type PlatformAuditAction =
+  // `plan_activated` is the pre-existing entry type for Super Admin's
+  // manual activations; new manual activations log
+  // `manual_plan_activation` instead (a complimentary/manual
+  // activation, explicitly NOT a payment). Both stay in the union so
+  // historical log rows still render.
+  | "member_administered"
+  | "manual_plan_activation"
   | "plan_activated"
   | "enterprise_activated"
   | "subscription_status_changed"

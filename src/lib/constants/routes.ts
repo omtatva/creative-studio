@@ -25,6 +25,14 @@ export const ROUTES = {
   settingsAccessControl: "/settings/access-control",
   settingsAi: "/settings/ai",
   settingsBilling: "/settings/billing",
+  // Dedicated customer-facing upgrade flow — deliberately OUTSIDE the
+  // (dashboard) route group (see src/app/billing/upgrade/page.tsx) so
+  // a customer upgrading never has to pass through the full workspace
+  // settings/editing shell (sidebar, member management, project
+  // config, ...) just to pick a plan. Settings > Billing & Plan still
+  // owns viewing usage/invoices/status; this route owns the actual
+  // plan-selection/checkout action.
+  billingUpgrade: "/billing/upgrade",
   // Platform-wide Super Admin section — see lib/constants/itSupport.ts.
   // Deliberately its own top-level nav (Sidebar.tsx), not nested under
   // /settings: Super Admin manages EVERY workspace, not one.

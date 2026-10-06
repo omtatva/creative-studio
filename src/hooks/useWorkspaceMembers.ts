@@ -20,10 +20,18 @@ export function useWorkspaceMembers() {
     }
     setIsLoading(true);
     const q = query(membersCol(), where("workspaceId", "==", workspaceId));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setMembers(snapshot.docs.map((d) => d.data()));
-      setIsLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        setMembers(snapshot.docs.map((d) => d.data()));
+        setIsLoading(false);
+      },
+      (err) => {
+        console.error("[useWorkspaceMembers] snapshot error:", err);
+        setMembers([]);
+        setIsLoading(false);
+      }
+    );
     return unsubscribe;
   }, [workspaceId]);
 

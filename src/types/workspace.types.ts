@@ -52,13 +52,29 @@ export interface Workspace extends Timestamps {
    * (checkWorkspaceLimit, canUseFeature, ...) keeps working unchanged;
    * none of them need to learn about the subscription doc at all.
    * "pending_payment" is this cache's own extra state (not a real
-   * SubscriptionStatus value) for "requested a paid plan, no
-   * subscription doc confirming it yet" — plan/limits stay on the free
-   * tier the whole time. See createWorkspace() in workspaceService.ts.
+   * SubscriptionStatus value) meaning "selected/requested a paid plan,
+   * payment not yet completed" — it covers BOTH "selected at signup,
+   * checkout not started" (no subscription doc yet) and "checkout
+   * started" (subscription doc at status `incomplete` — the server
+   * maps that to this value, see billingAdmin.ts's
+   * deriveWorkspaceBillingCache); the subscription's own
+   * `checkoutStatus` is what tells those two apart. "expired" is also
+   * cache-only: the effective state of a `trialing` subscription whose
+   * `trialEnd` has passed. plan/limits stay on the free tier the whole
+   * time for both. See createWorkspace() in workspaceService.ts.
+   * Server-controlled after creation — see firestore.rules.
    */
-  subscriptionStatus: "trialing" | "active" | "past_due" | "canceled" | "incomplete" | "paused" | "pending_payment";
-  /** The plan the user picked but hasn't paid for yet; null once active. */
+  subscriptionStatus: "trialing" | "active" | "past_due" | "canceled" | "incomplete" | "paused" | "pending_payment" | "expired";
+  /** The plan the user picked but hasn't paid for yet (selected, or checkout started); null once active/resolved. Server-controlled after creation — see firestore.rules. */
   pendingPlan: WorkspacePlan | null;
+  /**
+   * Server-synced copy of the subscription's `trialEnd` (ISO), so a
+   * surface that only has this cache doc (no subscription read) can
+   * still tell a live trial from an expired one — see
+   * lib/billingDisplay.ts. Absent on workspaces last synced before
+   * this field existed. Server-controlled — see firestore.rules.
+   */
+  trialEnd?: string | null;
   timezone: string;
   defaultLanguage: string;
   /**

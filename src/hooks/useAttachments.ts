@@ -17,10 +17,18 @@ export function useAttachments(taskId: string | undefined) {
       return;
     }
     setIsLoading(true);
-    const unsubscribe = onSnapshot(taskAttachmentsCol(taskId), (snapshot) => {
-      setAttachments(snapshot.docs.map((d) => d.data()));
-      setIsLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      taskAttachmentsCol(taskId),
+      (snapshot) => {
+        setAttachments(snapshot.docs.map((d) => d.data()));
+        setIsLoading(false);
+      },
+      (err) => {
+        console.error("[useAttachments] snapshot error:", err);
+        setAttachments([]);
+        setIsLoading(false);
+      }
+    );
     return unsubscribe;
   }, [taskId]);
 

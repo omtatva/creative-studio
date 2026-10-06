@@ -5,6 +5,7 @@ import { onSnapshot } from "firebase/firestore";
 import { memberDoc } from "@/lib/firebase/firestore";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
 import { useAuthContext } from "@/contexts/AuthContext";
+import { isSuperAdminUser } from "@/lib/constants/itSupport";
 import { MemberRole } from "@/types/workspace.types";
 
 /**
@@ -17,7 +18,7 @@ import { MemberRole } from "@/types/workspace.types";
  */
 export function useCurrentMemberRole() {
   const { workspaceId } = useWorkspaceContext();
-  const { firebaseUser } = useAuthContext();
+  const { firebaseUser, profile } = useAuthContext();
   const [role, setRole] = useState<MemberRole | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -63,9 +64,19 @@ export function useCurrentMemberRole() {
   }, [workspaceId, firebaseUser]);
 
   const canApproveReviews = role === "owner" || role === "admin";
-  const canManageMembers = role === "owner" || role === "admin";
-  /** Same owner/admin check as canManageMembers, under a name that reads correctly at non-member-management call sites (e.g. gating the AI API key config in Settings). */
+  // Workspace MEMBER ADMINISTRATION (invite, change role, disable/
+  // remove/restore, roles & access policy) is platform Super Admin only
+  // — NOT the workspace owner/admin. The real boundary is server-side
+  // (/api/workspaces/members, /api/invites/send, firestore.rules); this
+  // only decides what UI to show. Uses the existing Super Admin
+  // mechanism (the server-synced `platformRole`), not a second role
+  // system. Deliberately separate from canManageWorkspace below, which
+  // keeps meaning "workspace owner/admin" for project access and the
+  // customization settings they legitimately retain.
+  const isSuperAdmin = isSuperAdminUser(profile);
+  const canManageMembers = isSuperAdmin;
+  /** Workspace owner/admin — project access and the customization settings they retain (e.g. the AI API key config). NOT member administration; see canManageMembers. */
   const canManageWorkspace = role === "owner" || role === "admin";
 
-  return { role, isLoading, error, canApproveReviews, canManageMembers, canManageWorkspace };
+  return { role, isLoading, error, canApproveReviews, canManageMembers, canManageWorkspace, isSuperAdmin };
 }

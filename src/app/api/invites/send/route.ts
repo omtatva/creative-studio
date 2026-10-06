@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyRequestAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
+import { verifySuperAdminAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
 import { sendGmailMessage, GmailApiError } from "@/lib/server/gmailClient";
 import { enforceRateLimit, RateLimitExceededError } from "@/lib/server/rateLimit";
 
@@ -28,13 +28,14 @@ interface SendInviteEmailBody {
  * everything the client-side Firestore rules already enforce, using
  * firebase-admin (which bypasses those rules) rather than trusting
  * whatever the browser claims:
- *   1. The caller is a real, currently-authenticated Firebase user
- *      (verifyRequestAuth — never a uid read from the request body).
+ *   1. The caller is the platform SUPER ADMIN (verifySuperAdminAuth —
+ *      never a uid read from the request body). Inviting people into a
+ *      workspace is workspace member administration, which is Super
+ *      Admin only; a workspace owner/admin/employee gets 403. (This
+ *      used to accept a workspace owner/admin and, as a side effect,
+ *      rejected Super Admin, who isn't a member of customer workspaces.)
  *   2. The invite (looked up fresh from Firestore by inviteId, not
- *      trusted from the request body) genuinely belongs to a
- *      workspace the caller is a member of, with owner/admin role —
- *      the same bar workspace_invites' own `create`/`update` rules
- *      already enforce client-side, re-checked here server-side.
+ *      trusted from the request body) exists and its recipient matches.
  *   3. The email address matches the invite's own record, so a
  *      tampered `email` field in the request body can't redirect
  *      the message elsewhere.
@@ -50,10 +51,10 @@ interface SendInviteEmailBody {
 export async function POST(request: NextRequest) {
   let uid: string;
   try {
-    ({ uid } = await verifyRequestAuth(request));
+    ({ uid } = await verifySuperAdminAuth(request));
   } catch (err) {
-    const status = err instanceof AuthVerificationError ? err.status : 401;
-    const message = err instanceof Error ? err.message : "Authentication failed.";
+    const status = err instanceof AuthVerificationError ? err.status : 403;
+    const message = err instanceof Error ? err.message : "Not authorized.";
     return NextResponse.json({ error: message }, { status });
   }
 
@@ -93,12 +94,6 @@ export async function POST(request: NextRequest) {
   }
   if (invite.email.trim().toLowerCase() !== email.trim().toLowerCase()) {
     return NextResponse.json({ error: "The invitation's recipient doesn't match this request." }, { status: 400 });
-  }
-
-  const memberSnapshot = await adminDb().collection("members").doc(`${invite.workspaceId}_${uid}`).get();
-  const memberRole = memberSnapshot.exists ? (memberSnapshot.data()?.role as string | undefined) : undefined;
-  if (!memberRole || !["owner", "admin"].includes(memberRole)) {
-    return NextResponse.json({ error: "Only workspace owners and admins can send invitations." }, { status: 403 });
   }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";

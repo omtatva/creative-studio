@@ -18,10 +18,18 @@ export function useComments(taskId: string | undefined) {
     }
     setIsLoading(true);
     const q = query(taskCommentsCol(taskId), orderBy("createdAt", "asc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setComments(snapshot.docs.map((d) => d.data()));
-      setIsLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        setComments(snapshot.docs.map((d) => d.data()));
+        setIsLoading(false);
+      },
+      (err) => {
+        console.error("[useComments] snapshot error:", err);
+        setComments([]);
+        setIsLoading(false);
+      }
+    );
     return unsubscribe;
   }, [taskId]);
 

@@ -13,6 +13,8 @@ import { formatDate } from "@/lib/utils/date";
 import type { PlatformAuditLogEntry, PlatformAuditAction } from "@/types/platformAudit.types";
 
 const ACTION_LABEL: Record<PlatformAuditAction, string> = {
+  member_administered: "Workspace member administered",
+  manual_plan_activation: "Manual plan activation",
   plan_activated: "Plan activated",
   enterprise_activated: "Enterprise activated",
   subscription_status_changed: "Subscription status changed",

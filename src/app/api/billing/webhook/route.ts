@@ -2,14 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "crypto";
 import { applySubscriptionUpdateIdempotent } from "@/lib/server/billingAdmin";
 import { logPlatformAudit } from "@/lib/server/platformAudit";
+import { notifyPaymentOutcome } from "@/lib/server/billingNotify";
+import { adminDb } from "@/lib/server/firebaseAdmin";
 import { PLAN_LIMITS } from "@/lib/constants/planLimits";
-import type { SubscriptionStatus, BillingProvider } from "@/types/billing.types";
+import type { SubscriptionStatus, BillingProvider, PaymentStatus } from "@/types/billing.types";
 import type { WorkspacePlan } from "@/types/workspace.types";
 
 export const runtime = "nodejs";
 
 const VALID_STATUSES: SubscriptionStatus[] = ["trialing", "active", "past_due", "canceled", "incomplete", "paused"];
 const VALID_PROVIDERS: BillingProvider[] = ["manual", "stripe", "razorpay", "paddle"];
+const VALID_PAYMENT_OUTCOMES: PaymentStatus[] = ["paid", "failed", "cancelled"];
 
 /**
  * Billing-provider webhook endpoint — the ONLY thing allowed to move a
@@ -89,6 +92,27 @@ interface WebhookBody {
   cancelAtPeriodEnd?: boolean;
   trialStart?: string;
   trialEnd?: string;
+  /**
+   * The OUTCOME of a specific checkout attempt this event reports on —
+   * "paid" | "failed" | "cancelled". Omitted for a generic subscription
+   * lifecycle event (e.g. a direct status push unrelated to a checkout
+   * attempt). When present, this is what actually decides whether the
+   * subscription activates:
+   *   - "paid": the ONLY value that may flip `status` to the real,
+   *     paid `active` state (see MASTER AUDIT — "FREE TRIAL != PAID
+   *     PRO"). `planId`/`status`/the period fields from this body are
+   *     applied for real, and an existing trial's `trialEnd` is
+   *     cleared (a real paid subscription doesn't carry a dangling
+   *     trial window) — see applySubscriptionUpdate below.
+   *   - "failed" / "cancelled": the request did NOT succeed. Whatever
+   *     live entitlement the workspace already had (an active paid
+   *     plan, or a trial that hasn't expired) is left completely
+   *     untouched — `status`/`planId`/`trialEnd` are never included in
+   *     that patch — only `checkoutStatus`/`paymentStatus` change, and
+   *     any pending `requestedPlanId` is cleared since the request is
+   *     now resolved (unsuccessfully).
+   */
+  paymentStatus?: PaymentStatus;
 }
 
 /** Constant-time secret comparison — a plain `!==` leaks (in theory; network jitter makes this hard to exploit in practice, but there's no reason not to close it) how many leading bytes matched via response timing. */
@@ -147,23 +171,45 @@ export async function POST(request: NextRequest) {
     console.error("[billing/webhook] rejected: unknown billingProvider", { eventId: body.eventId, billingProvider: body.billingProvider });
     return NextResponse.json({ error: "Unknown billingProvider." }, { status: 400 });
   }
+  if (body.paymentStatus !== undefined && !VALID_PAYMENT_OUTCOMES.includes(body.paymentStatus)) {
+    return NextResponse.json({ error: "paymentStatus must be paid, failed, or cancelled when present." }, { status: 400 });
+  }
+
+  // A "failed"/"cancelled" checkout OUTCOME must never touch the
+  // subscription's own entitlement fields — whatever the workspace was
+  // already entitled to (an active paid plan, or a trial that hasn't
+  // expired) keeps applying untouched; only the checkout/payment
+  // bookkeeping changes, and any pending `requestedPlanId` is resolved
+  // (unsuccessfully). A "paid" outcome is the ONLY path that may ever
+  // move `status` to a genuinely paid `active` state — and clears any
+  // dangling trial window, since a real paid subscription doesn't
+  // carry one (see MASTER AUDIT — "FREE TRIAL != PAID PRO").
+  const isPaidOutcome = body.paymentStatus === "paid";
+  const isUnsuccessfulOutcome = body.paymentStatus === "failed" || body.paymentStatus === "cancelled";
 
   try {
     const { subscription, duplicate, outOfOrder } = await applySubscriptionUpdateIdempotent(
       body.eventId,
       body.workspaceId,
-      {
-        planId: body.planId,
-        status: body.status,
-        billingProvider: body.billingProvider,
-        customerId: body.customerId ?? null,
-        subscriptionId: body.subscriptionId ?? null,
-        currentPeriodStart: body.currentPeriodStart ?? null,
-        currentPeriodEnd: body.currentPeriodEnd ?? null,
-        cancelAtPeriodEnd: body.cancelAtPeriodEnd ?? false,
-        trialStart: body.trialStart ?? null,
-        trialEnd: body.trialEnd ?? null,
-      },
+      isUnsuccessfulOutcome
+        ? {
+            checkoutStatus: body.paymentStatus === "failed" ? "failed" : "cancelled",
+            paymentStatus: body.paymentStatus,
+            requestedPlanId: null,
+          }
+        : {
+            planId: body.planId,
+            status: body.status,
+            billingProvider: body.billingProvider,
+            customerId: body.customerId ?? null,
+            subscriptionId: body.subscriptionId ?? null,
+            currentPeriodStart: body.currentPeriodStart ?? null,
+            currentPeriodEnd: body.currentPeriodEnd ?? null,
+            cancelAtPeriodEnd: body.cancelAtPeriodEnd ?? false,
+            trialStart: isPaidOutcome ? null : (body.trialStart ?? null),
+            trialEnd: isPaidOutcome ? null : (body.trialEnd ?? null),
+            ...(isPaidOutcome ? ({ checkoutStatus: "completed", paymentStatus: "paid" } as const) : {}),
+          },
       body.eventTimestamp
     );
 
@@ -177,9 +223,30 @@ export async function POST(request: NextRequest) {
           planId: body.planId,
           status: body.status,
           billingProvider: body.billingProvider,
+          paymentStatus: body.paymentStatus ?? null,
           outOfOrder,
         },
       });
+
+      // Email is gated on `!duplicate && !outOfOrder` — NOT `!duplicate`
+      // alone. `applySubscriptionUpdateIdempotent` returns
+      // `duplicate: false` for BOTH a genuinely newly-applied event AND
+      // an out-of-order event it rejected without applying (a late
+      // "paid" event arriving after a newer "canceled" one, say) — only
+      // `outOfOrder` distinguishes "actually applied" from "received
+      // but ignored." Sending an activation/failure email for a
+      // rejected event would falsely tell Super Admin something
+      // happened that the subscription itself never reflects.
+      if (!outOfOrder && (isPaidOutcome || body.paymentStatus === "failed")) {
+        const workspaceSnap = await adminDb().collection("workspaces").doc(body.workspaceId).get();
+        await notifyPaymentOutcome({
+          workspaceId: body.workspaceId,
+          workspaceName: (workspaceSnap.data()?.name as string | undefined) ?? body.workspaceId,
+          planId: body.planId,
+          outcome: isPaidOutcome ? "activated" : "failed",
+          subscriptionId: body.subscriptionId ?? null,
+        });
+      }
     }
 
     return NextResponse.json({ success: true, subscription, duplicate, outOfOrder, developmentSafeMode: true });

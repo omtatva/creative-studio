@@ -1,9 +1,7 @@
-import { deleteDoc, getDoc, getDocs, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
-import { memberDoc, membersCol } from "@/lib/firebase/firestore";
-import { logActivity } from "@/services/activityService";
+import { getDocs, query, where } from "firebase/firestore";
+import { membersCol } from "@/lib/firebase/firestore";
 import { getCurrentUser } from "@/lib/firebase/auth";
 import { Member, MemberRole } from "@/types/workspace.types";
-import { TaskActor } from "@/types/task.types";
 
 /**
  * Workspace membership queries AND mutations (role change, disable/
@@ -23,64 +21,39 @@ export async function getUserWorkspaceMemberships(userId: string): Promise<Membe
   return snapshot.docs.map((d) => d.data());
 }
 
-async function assertMember(workspaceId: string, uid: string): Promise<Member> {
-  const snapshot = await getDoc(memberDoc(workspaceId, uid));
-  if (!snapshot.exists()) throw new Error("Member not found in this workspace.");
-  return snapshot.data();
-}
-
-export async function changeMemberRole(workspaceId: string, uid: string, role: MemberRole, actor: TaskActor): Promise<void> {
-  const member = await assertMember(workspaceId, uid);
-  await updateDoc(memberDoc(workspaceId, uid), { role, updatedAt: serverTimestamp() });
-  await logActivity(workspaceId, {
-    actorId: actor.uid,
-    actorName: actor.displayName,
-    action: `changed ${member.displayName}'s role to ${role}`,
-    targetType: "member",
-    targetId: uid,
+/**
+ * Workspace member ADMINISTRATION — change role, disable/restore,
+ * remove — is Super Admin only and runs on the server
+ * (/api/workspaces/members, authorized with the platform Super Admin
+ * mechanism; firestore.rules makes `members` update/delete
+ * server-only). These used to write `members/{workspaceId}_{uid}`
+ * directly from the browser, authorized only by rules that allowed the
+ * workspace owner/admin. The server also writes the workspace activity
+ * entry and recomputes the member count after a removal.
+ */
+async function memberAdminApi(body: { workspaceId: string; uid: string; action: "change_role" | "set_disabled" | "remove"; role?: MemberRole; disabled?: boolean }): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error("You must be signed in.");
+  const idToken = await user.getIdToken();
+  const response = await fetch("/api/workspaces/members", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify(body),
   });
-}
-
-export async function setMemberDisabled(workspaceId: string, uid: string, disabled: boolean, actor: TaskActor): Promise<void> {
-  const member = await assertMember(workspaceId, uid);
-  await updateDoc(memberDoc(workspaceId, uid), { status: disabled ? "suspended" : "active", updatedAt: serverTimestamp() });
-  await logActivity(workspaceId, {
-    actorId: actor.uid,
-    actorName: actor.displayName,
-    action: `${disabled ? "disabled" : "re-enabled"} ${member.displayName}`,
-    targetType: "member",
-    targetId: uid,
-  });
-}
-
-export async function removeMember(workspaceId: string, uid: string, actor: TaskActor): Promise<void> {
-  const member = await assertMember(workspaceId, uid);
-  await deleteDoc(memberDoc(workspaceId, uid));
-  await logActivity(workspaceId, {
-    actorId: actor.uid,
-    actorName: actor.displayName,
-    action: `removed ${member.displayName} from the workspace`,
-    targetType: "member",
-    targetId: uid,
-  });
-  // Removal frees a member slot — resync (never a blind decrement,
-  // see workspaceQuota.ts's doc comment) so the next invite acceptance
-  // sees accurate capacity. Fire-and-forget: the removal itself
-  // already succeeded above regardless of whether this does.
-  void resyncMemberCount(workspaceId);
-}
-
-async function resyncMemberCount(workspaceId: string): Promise<void> {
-  try {
-    const currentUser = getCurrentUser();
-    if (!currentUser) return;
-    const idToken = await currentUser.getIdToken();
-    await fetch("/api/workspaces/resync-count", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
-      body: JSON.stringify({ workspaceId, metric: "member" }),
-    });
-  } catch (err) {
-    console.error("[userService] member-count resync failed (non-fatal):", err);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data?.error ?? "Couldn't update this member.");
   }
+}
+
+export async function changeMemberRole(workspaceId: string, uid: string, role: MemberRole): Promise<void> {
+  await memberAdminApi({ workspaceId, uid, action: "change_role", role });
+}
+
+export async function setMemberDisabled(workspaceId: string, uid: string, disabled: boolean): Promise<void> {
+  await memberAdminApi({ workspaceId, uid, action: "set_disabled", disabled });
+}
+
+export async function removeMember(workspaceId: string, uid: string): Promise<void> {
+  await memberAdminApi({ workspaceId, uid, action: "remove" });
 }

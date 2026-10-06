@@ -9,6 +9,9 @@ import { WorkspacePlan, WorkspacePlanLimits } from "@/types/workspace.types";
  */
 export const DEFAULT_PLAN: WorkspacePlan = "starter";
 
+/** Length of the automatic Pro trial a new workspace gets — see /api/billing/start-trial. Also what a legacy `trialing` record with a `trialStart` but no `trialEnd` is measured against (entitlements.ts resolveTrialEnd). */
+export const TRIAL_DAYS = 7;
+
 export const FEATURE_KEYS = ["aiStudio", "reviews", "board", "downloads", "customBranding"] as const;
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
 

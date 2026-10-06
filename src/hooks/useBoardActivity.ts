@@ -18,10 +18,18 @@ export function useBoardActivity(boardId: string | undefined) {
     }
     setIsLoading(true);
     const q = query(boardActivityCol(boardId), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setEntries(snapshot.docs.map((d) => d.data()));
-      setIsLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        setEntries(snapshot.docs.map((d) => d.data()));
+        setIsLoading(false);
+      },
+      (err) => {
+        console.error("[useBoardActivity] snapshot error:", err);
+        setEntries([]);
+        setIsLoading(false);
+      }
+    );
     return unsubscribe;
   }, [boardId]);
 

@@ -18,7 +18,10 @@ import { isSuperAdminUser } from "@/lib/constants/itSupport";
 import { getWorkspace, deleteWorkspaceAccess } from "@/services/workspaceService";
 import { getWorkspaceMembers } from "@/services/userService";
 import { getWorkspaceProjects, deleteProject } from "@/services/projectService";
-import { PLAN_DISPLAY_NAMES } from "@/lib/constants/planLimits";
+import { planHeadline, resolveBillingView } from "@/lib/billingDisplay";
+import { useBillingCacheResync } from "@/hooks/useBillingCacheResync";
+import { getWorkspaceSubscription } from "@/services/subscriptionService";
+import type { WorkspaceSubscription } from "@/types/billing.types";
 import { ROUTES, projectRoute } from "@/lib/constants/routes";
 import { formatDate } from "@/lib/utils/date";
 import { Workspace, Member } from "@/types/workspace.types";
@@ -43,6 +46,7 @@ export default function SuperAdminCustomerDetailPage({ params }: { params: Promi
   const isSuperAdmin = isSuperAdminUser(profile);
 
   const [workspace, setWorkspace] = useState<Workspace | null | undefined>(undefined);
+  const [subscription, setSubscription] = useState<WorkspaceSubscription | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoadingDetail, setIsLoadingDetail] = useState(true);
@@ -59,12 +63,18 @@ export default function SuperAdminCustomerDetailPage({ params }: { params: Promi
     if (!isSuperAdmin) return;
     let cancelled = false;
     setIsLoadingDetail(true);
-    Promise.all([getWorkspace(workspaceId), getWorkspaceMembers(workspaceId), getWorkspaceProjects(workspaceId)])
-      .then(([ws, m, p]) => {
+    Promise.all([
+      getWorkspace(workspaceId),
+      getWorkspaceMembers(workspaceId),
+      getWorkspaceProjects(workspaceId),
+      getWorkspaceSubscription(workspaceId).catch(() => null),
+    ])
+      .then(([ws, m, p, sub]) => {
         if (cancelled) return;
         setWorkspace(ws);
         setMembers(m);
         setProjects(p);
+        setSubscription(sub);
       })
       .catch((err) => {
         console.error("[super-admin customer detail] failed to load:", err);
@@ -75,6 +85,10 @@ export default function SuperAdminCustomerDetailPage({ params }: { params: Promi
       cancelled = true;
     };
   }, [isSuperAdmin, workspaceId]);
+
+  // Repair this workspace's billing display cache if it's stale
+  // (e.g. an expired trial still cached as "trialing") — server-side.
+  useBillingCacheResync(workspace ?? null, isLoadingDetail ? undefined : subscription);
 
   async function handleDelete() {
     if (!workspace) return;
@@ -128,6 +142,7 @@ export default function SuperAdminCustomerDetailPage({ params }: { params: Promi
     );
   }
 
+  const billingView = resolveBillingView(workspace, subscription);
   const owner = members.find((m) => m.userId === workspace.ownerId) ?? null;
   const activeProjects = projects.filter((p) => !p.isArchived);
   const archivedProjects = projects.filter((p) => p.isArchived);
@@ -141,7 +156,9 @@ export default function SuperAdminCustomerDetailPage({ params }: { params: Promi
         </Link>
         <div className="flex items-center gap-2">
           <h1 className="text-xl font-semibold text-foreground">{workspace.name}</h1>
-          <Badge variant="info">{PLAN_DISPLAY_NAMES[workspace.plan]}</Badge>
+          <Badge variant="info">{planHeadline(billingView.plan, billingView.isTrialing)}</Badge>
+          {billingView.trialExpired && <Badge variant="warning">Trial Expired</Badge>}
+          {billingView.status === "pending_payment" && <Badge variant="warning">Pending payment</Badge>}
         </div>
         <p className="mt-1 text-sm text-foreground-muted">
           {workspace.companyName} · Created {formatDate(workspace.createdAt)}

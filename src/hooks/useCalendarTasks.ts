@@ -35,10 +35,18 @@ export function useCalendarTasks() {
     if (accessibleProjectIds === null) {
       setIsLoading(true);
       const q = query(tasksCol(), where("workspaceId", "==", workspaceId));
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        setTasks(snapshot.docs.map((d) => d.data()).filter((t) => !t.isArchived && t.dueDate));
-        setIsLoading(false);
-      });
+      const unsubscribe = onSnapshot(
+        q,
+        (snapshot) => {
+          setTasks(snapshot.docs.map((d) => d.data()).filter((t) => !t.isArchived && t.dueDate));
+          setIsLoading(false);
+        },
+        (err) => {
+          console.error("[useCalendarTasks] snapshot error:", err);
+          setTasks([]);
+          setIsLoading(false);
+        }
+      );
       return unsubscribe;
     }
 
@@ -64,6 +72,10 @@ export function useCalendarTasks() {
             snapshot.docs.map((d) => d.data()).filter((t) => !t.isArchived && t.dueDate)
           );
           setTasks(Array.from(resultsByChunk.values()).flat());
+          setIsLoading(false);
+        },
+        (err) => {
+          console.error("[useCalendarTasks] chunk snapshot error:", err);
           setIsLoading(false);
         }
       )

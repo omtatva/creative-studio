@@ -1,19 +1,24 @@
+"use client";
+
 import Link from "next/link";
 import { Building2, Palette, Sliders, Users, Bell, Lock, Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { ROUTES } from "@/lib/constants/routes";
+import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
 
 const SHORTCUTS = [
   { href: ROUTES.settingsWorkspace, label: "Workspace", description: "Name, slug, and company details", icon: Building2 },
   { href: ROUTES.settingsBranding, label: "Branding", description: "Logo, favicon, and brand color", icon: Palette },
   { href: ROUTES.settingsTheme, label: "Theme", description: "Colors, radius, and typography", icon: Sliders },
-  { href: ROUTES.settingsUsers, label: "Users", description: "Manage members and invites", icon: Users },
+  { href: ROUTES.settingsUsers, label: "Users", description: "Manage members and invites", icon: Users, superAdminOnly: true },
   { href: ROUTES.settingsAi, label: "AI Settings", description: "Generation preferences for AI Studio", icon: Sparkles },
   { href: ROUTES.settingsNotifications, label: "Notifications", description: "Email and push preferences", icon: Bell },
   { href: ROUTES.settingsSecurity, label: "Security", description: "2FA, sessions, and domains", icon: Lock },
 ];
 
 export default function SettingsIndexPage() {
+  const { isSuperAdmin } = useCurrentMemberRole();
+  const shortcuts = SHORTCUTS.filter((item) => !("superAdminOnly" in item && item.superAdminOnly) || isSuperAdmin);
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -22,7 +27,7 @@ export default function SettingsIndexPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {SHORTCUTS.map((item) => (
+        {shortcuts.map((item) => (
           <Link key={item.href} href={item.href}>
             <Card className="h-full transition-transform hover:-translate-y-0.5">
               <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-theme bg-primary/10 text-primary">

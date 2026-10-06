@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyRequestAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
 import { applySubscriptionUpdate } from "@/lib/server/billingAdmin";
+import { logPlatformAudit } from "@/lib/server/platformAudit";
+import { TRIAL_DAYS } from "@/lib/constants/planLimits";
 
 export const runtime = "nodejs";
 
-const TRIAL_DAYS = 7;
 const TRIAL_PLAN = "pro" as const;
 
 /**
@@ -66,6 +67,19 @@ export async function POST(request: NextRequest) {
     },
     uid
   );
+
+  // Deliberately NOT routed through notifyPurchaseRequest/Gmail — a
+  // trial starting is not a purchase and must never look like one in
+  // Super Admin's inbox (see MASTER AUDIT section 7). It still gets an
+  // audit-log entry, same as every other billing transition, using the
+  // existing "subscription_status_changed" action + a distinguishing
+  // `event` in `details` rather than a new action type.
+  await logPlatformAudit({
+    actorUid: uid,
+    action: "subscription_status_changed",
+    workspaceId,
+    details: { event: "trial_started", planId: TRIAL_PLAN, trialEnd: trialEnd.toISOString() },
+  });
 
   return NextResponse.json({ success: true, subscription });
 }

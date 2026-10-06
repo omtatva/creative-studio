@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
 import { createWorkspace, isSlugAvailable } from "@/services/workspaceService";
-import { startTrial } from "@/services/billingService";
+import { startTrial, resyncBillingCache } from "@/services/billingService";
+import { DEFAULT_PLAN } from "@/lib/constants/planLimits";
 import { CreateWorkspacePayload } from "@/types/workspace.types";
 import { ROUTES } from "@/lib/constants/routes";
 
@@ -45,13 +46,43 @@ export function useWorkspace() {
         firebaseUser.photoURL,
         payload
       );
-      // Best-effort: a brand-new workspace should still exist even if
-      // starting its trial fails for some reason (network blip, etc.)
-      // — never fail workspace creation itself over this.
-      await startTrial(newWorkspaceId).catch((err) => console.error("[useWorkspace] startTrial failed (workspace still created):", err));
+
+      // The plan picked on /pricing decides what happens next. Only a
+      // default/explicit-Free signup gets the automatic 7-day Pro
+      // trial. An explicit Pro/Business pick gets NO trial and — just
+      // as important — NO checkout, purchase request, or email here:
+      // createWorkspace() already left the workspace in the
+      // `pending_payment` state with the plan in `pendingPlan` (Free
+      // entitlements, nothing paid), and that selection alone is not a
+      // purchase. The customer is sent to /billing/upgrade, and a
+      // purchase request exists only once they click "Continue to
+      // Payment" there (see useChoosePlan → /api/billing/checkout).
+      // Enterprise has no self-serve checkout at all — Contact Sales is
+      // the only path, same as everywhere else in the app.
+      const requestedPlan = payload.plan ?? DEFAULT_PLAN;
+      if (requestedPlan === DEFAULT_PLAN) {
+        // Best-effort: a brand-new workspace should still exist even if
+        // starting its trial fails (network blip, etc.) — never fail
+        // workspace creation itself over this.
+        await startTrial(newWorkspaceId).catch((err) => console.error("[useWorkspace] startTrial failed (workspace still created):", err));
+      } else {
+        // No trial and no checkout — but the workspace doc's billing
+        // display cache (`limits` in particular, which firestore.rules
+        // can't validate at creation) was written by this client, so
+        // have the server overwrite it with the authoritative Free
+        // value. Records nothing, charges nothing, creates no request.
+        await resyncBillingCache(newWorkspaceId).catch((err) => console.error("[useWorkspace] billing cache resync failed (workspace still created):", err));
+      }
+
       await refreshProfile();
       if (options?.redirectOnSuccess !== false) {
-        router.push(ROUTES.dashboard);
+        if (requestedPlan === "enterprise") {
+          router.push("/pricing#contact-sales");
+        } else if (requestedPlan !== DEFAULT_PLAN) {
+          router.push(`${ROUTES.billingUpgrade}?plan=${requestedPlan}`);
+        } else {
+          router.push(ROUTES.dashboard);
+        }
       }
       return newWorkspaceId;
     } catch (err) {

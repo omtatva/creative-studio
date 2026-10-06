@@ -14,7 +14,8 @@ import { useToast } from "@/hooks/useToast";
 import { isSuperAdminUser, SUPER_ADMIN_EMAIL } from "@/lib/constants/itSupport";
 import { resendVerificationEmail } from "@/lib/firebase/auth";
 import { getWorkspaceMembers } from "@/services/userService";
-import { PLAN_DISPLAY_NAMES } from "@/lib/constants/planLimits";
+import { planHeadline, resolveBillingView } from "@/lib/billingDisplay";
+import { useAllWorkspaceSubscriptions } from "@/hooks/useBillingCacheResync";
 import { ROUTES } from "@/lib/constants/routes";
 import { formatDate } from "@/lib/utils/date";
 import { Workspace, Member } from "@/types/workspace.types";
@@ -48,6 +49,7 @@ export default function SuperAdminCustomersPage() {
   const { firebaseUser, profile } = useAuthContext();
   const { workspaces, isLoading: isLoadingWorkspaces } = useWorkspaceContext();
   const [rows, setRows] = useState<WorkspaceRow[] | null>(null);
+  const { byWorkspaceId: subscriptions } = useAllWorkspaceSubscriptions(workspaces);
   const [isSendingVerification, setIsSendingVerification] = useState(false);
   const [verificationSent, setVerificationSent] = useState(false);
   const toast = useToast();
@@ -125,7 +127,10 @@ export default function SuperAdminCustomersPage() {
           <EmptyState icon={<Building2 className="h-8 w-8" />} title="No workspaces yet" description="Nothing has been created on the platform yet." />
         ) : (
           <div className="flex flex-col gap-2">
-            {rows.map(({ workspace, owner, memberCount }) => (
+            {rows.map(({ workspace, owner, memberCount }) => {
+              // From the subscription (live expiry), not the plan cache.
+              const view = subscriptions ? resolveBillingView(workspace, subscriptions[workspace.id] ?? null) : null;
+              return (
               <Link
                 key={workspace.id}
                 href={`${ROUTES.superAdminCustomers}/${workspace.id}`}
@@ -134,7 +139,9 @@ export default function SuperAdminCustomersPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <p className="truncate text-sm font-semibold text-foreground">{workspace.name}</p>
-                    <Badge variant="info">{PLAN_DISPLAY_NAMES[workspace.plan]}</Badge>
+                    {view && <Badge variant="info">{planHeadline(view.plan, view.isTrialing)}</Badge>}
+                    {view?.trialExpired && <Badge variant="warning">Trial Expired</Badge>}
+                    {view?.status === "pending_payment" && <Badge variant="warning">Pending payment</Badge>}
                   </div>
                   <p className="truncate text-xs text-foreground-muted">
                     {workspace.companyName} · Created {formatDate(workspace.createdAt)}
@@ -151,7 +158,8 @@ export default function SuperAdminCustomersPage() {
                   <ChevronRight className="h-4 w-4 shrink-0 text-foreground-muted" />
                 </div>
               </Link>
-            ))}
+              );
+            })}
           </div>
         )}
       </SettingsSection>

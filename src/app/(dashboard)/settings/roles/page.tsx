@@ -10,6 +10,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Loader } from "@/components/ui/Loader";
 import { ConfirmModal } from "@/components/shared/ConfirmModal";
 import { useCustomRoles } from "@/hooks/useCustomRoles";
+import { SuperAdminOnly } from "@/components/auth/SuperAdminOnly";
 import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
 import { useAuthContext } from "@/contexts/AuthContext";
@@ -27,9 +28,9 @@ import { CustomRoleFormValues } from "@/lib/validations/settings.schema";
  * Control page, which reads/writes the SAME CustomRole.permissions
  * array — no duplicate role storage between the two pages.
  */
-export default function RolesSettingsPage() {
+function RolesSettingsPageContent() {
   const { roles, archivedRoles, isLoading } = useCustomRoles();
-  const { canManageWorkspace } = useCurrentMemberRole();
+  const { canManageMembers } = useCurrentMemberRole();
   const { workspaceId } = useWorkspaceContext();
   const { firebaseUser, profile } = useAuthContext();
   const toast = useToast();
@@ -107,7 +108,7 @@ export default function RolesSettingsPage() {
           <h1 className="text-xl font-semibold text-foreground">Roles & Permissions</h1>
           <p className="mt-1 text-sm text-foreground-muted">Unlimited custom roles, seeded with 8 standard starting points.</p>
         </div>
-        {canManageWorkspace && (
+        {canManageMembers && (
           <Button size="sm" onClick={() => { setEditingRole(null); setIsFormOpen(true); }}>
             <Plus className="h-4 w-4" />
             New role
@@ -115,8 +116,8 @@ export default function RolesSettingsPage() {
         )}
       </div>
 
-      {!canManageWorkspace && (
-        <p className="text-xs text-foreground-muted">Only workspace owners and admins can create or change roles. You can still view them here.</p>
+      {!canManageMembers && (
+        <p className="text-xs text-foreground-muted">Only the platform administrator can create or change roles.</p>
       )}
 
       <SettingsSection
@@ -144,7 +145,7 @@ export default function RolesSettingsPage() {
                     {role.description || `${role.permissions.length} of ${PERMISSION_CATALOG.length} permissions`}
                   </p>
                 </div>
-                {canManageWorkspace && (
+                {canManageMembers && (
                   <>
                     {!showArchived && (
                       <>
@@ -188,5 +189,14 @@ export default function RolesSettingsPage() {
         isDanger
       />
     </div>
+  );
+}
+
+/** Workspace member & access administration is platform Super Admin only — see SuperAdminOnly. */
+export default function RolesSettingsPage() {
+  return (
+    <SuperAdminOnly title="Roles">
+      <RolesSettingsPageContent />
+    </SuperAdminOnly>
   );
 }

@@ -22,10 +22,18 @@ export function useCustomRoles() {
     setIsLoading(true);
     seedDefaultRolesIfEmpty(workspaceId).catch((err) => console.error("[useCustomRoles] seedDefaultRolesIfEmpty failed:", err));
     const q = query(customRolesCol(), where("workspaceId", "==", workspaceId), orderBy("createdAt", "asc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setRoles(snapshot.docs.map((d) => d.data()));
-      setIsLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        setRoles(snapshot.docs.map((d) => d.data()));
+        setIsLoading(false);
+      },
+      (err) => {
+        console.error("[useCustomRoles] snapshot error:", err);
+        setRoles([]);
+        setIsLoading(false);
+      }
+    );
     return unsubscribe;
   }, [workspaceId]);
 

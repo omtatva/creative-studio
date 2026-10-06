@@ -69,6 +69,11 @@ export function setSubscriptionStatus(workspaceId: string, status: Extract<Subsc
   return callBillingApi<{ subscription: WorkspaceSubscription }>("/api/billing/set-status", { workspaceId, status });
 }
 
+/** Asks the server to repair this workspace's billing display cache from its authoritative subscription (e.g. after a trial expired) — takes no billing input, so it can't change entitlements; see /api/billing/resync-cache. */
+export function resyncBillingCache(workspaceId: string) {
+  return callBillingApi<{ changed: boolean; cache: { plan: WorkspacePlan; subscriptionStatus: string } }>("/api/billing/resync-cache", { workspaceId });
+}
+
 /** Called once, right after a brand-new workspace is created (see useWorkspace.ts) — starts its 7-day Pro trial. Best-effort: a failure here should never block workspace creation itself. */
 export function startTrial(workspaceId: string) {
   return callBillingApi<{ subscription: WorkspaceSubscription }>("/api/billing/start-trial", { workspaceId });

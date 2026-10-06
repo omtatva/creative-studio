@@ -25,10 +25,18 @@ export function useBoardColumns(boardId: string | undefined) {
       where("boardId", "==", boardId),
       orderBy("order", "asc")
     );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setColumns(snapshot.docs.map((d) => d.data()));
-      setIsLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        setColumns(snapshot.docs.map((d) => d.data()));
+        setIsLoading(false);
+      },
+      (err) => {
+        console.error("[useBoardColumns] snapshot error:", err);
+        setColumns([]);
+        setIsLoading(false);
+      }
+    );
     return unsubscribe;
   }, [boardId, workspaceId]);
 

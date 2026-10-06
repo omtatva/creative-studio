@@ -20,10 +20,18 @@ export function useSubtasks(parentTaskId: string | undefined) {
     }
     setIsLoading(true);
     const q = query(tasksCol(), where("workspaceId", "==", workspaceId), where("parentTaskId", "==", parentTaskId));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setSubtasks(snapshot.docs.map((d) => d.data()));
-      setIsLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        setSubtasks(snapshot.docs.map((d) => d.data()));
+        setIsLoading(false);
+      },
+      (err) => {
+        console.error("[useSubtasks] snapshot error:", err);
+        setSubtasks([]);
+        setIsLoading(false);
+      }
+    );
     return unsubscribe;
   }, [parentTaskId, workspaceId]);
 

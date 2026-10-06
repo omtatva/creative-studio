@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/Button";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
 import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
 import { getWorkspaceSubscription } from "@/services/subscriptionService";
-import { isTrialExpired } from "@/lib/entitlements";
+import { useBillingCacheResync } from "@/hooks/useBillingCacheResync";
+import { isTrialExpired, resolveTrialEnd } from "@/lib/entitlements";
 import { PLAN_DISPLAY_NAMES } from "@/lib/constants/planLimits";
 import { ROUTES } from "@/lib/constants/routes";
 import type { WorkspaceSubscription } from "@/types/billing.types";
@@ -45,12 +46,23 @@ export function TrialBanner() {
       .catch(() => setSubscription(null));
   }, [workspace]);
 
-  if (!workspace || !canManageWorkspace || !subscription || subscription.status !== "trialing" || !subscription.trialEnd) {
+  // The banner itself already reads the subscription live; this also
+  // asks the server to repair the workspace's display cache when the
+  // trial has expired, so every cache-based surface stops saying
+  // "Pro Trial" too (see useBillingCacheResync).
+  useBillingCacheResync(workspace, subscription);
+
+  if (!workspace || !canManageWorkspace || !subscription || subscription.status !== "trialing") {
     return null;
   }
 
+  // isTrialExpired/resolveTrialEnd are the one definition of "when does
+  // this trial end" — including legacy records with no explicit
+  // trialEnd (measured from trialStart) and records with neither,
+  // which count as expired rather than as an active trial.
   const expired = isTrialExpired(subscription);
-  const remaining = expired ? 0 : daysRemaining(subscription.trialEnd);
+  const trialEnd = resolveTrialEnd(subscription);
+  const remaining = expired || !trialEnd ? 0 : daysRemaining(trialEnd);
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-theme border border-primary/30 bg-primary/5 p-4">
@@ -59,7 +71,7 @@ export function TrialBanner() {
         <div>
           <p className="text-sm font-medium text-foreground">
             {expired
-              ? `Your ${PLAN_DISPLAY_NAMES[subscription.planId]} trial has ended`
+              ? `Your ${PLAN_DISPLAY_NAMES[subscription.planId]} trial has expired`
               : `${PLAN_DISPLAY_NAMES[subscription.planId]} trial — ${remaining} day${remaining === 1 ? "" : "s"} remaining`}
           </p>
           <p className="text-xs text-foreground-muted">
@@ -69,7 +81,7 @@ export function TrialBanner() {
           </p>
         </div>
       </div>
-      <Button size="sm" variant={expired ? "primary" : "outline"} onClick={() => router.push(ROUTES.settingsBilling)}>
+      <Button size="sm" variant={expired ? "primary" : "outline"} onClick={() => router.push(ROUTES.billingUpgrade)}>
         Upgrade Plan
       </Button>
     </div>

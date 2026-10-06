@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyRequestAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
-import { applySubscriptionUpdate, getSubscriptionAdmin } from "@/lib/server/billingAdmin";
+import { applySubscriptionUpdate, getSubscriptionAdmin, planRequestDecision } from "@/lib/server/billingAdmin";
 import { logPlatformAudit } from "@/lib/server/platformAudit";
 import { enforceRateLimit, RateLimitExceededError } from "@/lib/server/rateLimit";
+import { notifyPurchaseRequest } from "@/lib/server/billingNotify";
 import { mergePlanConfig } from "@/lib/planConfig";
 import type { PlatformPlanConfig } from "@/types/platformConfig.types";
 import type { WorkspacePlan } from "@/types/workspace.types";
@@ -90,25 +91,59 @@ export async function POST(request: NextRequest) {
       {
         error: "This plan can't be applied yet.",
         violations,
-        resolution: "Remove members or archive projects to fit the new plan's limits, then try again.",
+        resolution: "Archive projects, or contact support to adjust your team, to fit the new plan's limits, then try again.",
       },
       { status: 409 }
     );
   }
 
-  // No real payment provider yet — same "incomplete until confirmed"
-  // path as /api/billing/checkout for a brand-new subscription. Once a
-  // provider is connected, an UPGRADE could stay this simple (redirect
-  // to a proration checkout) while a DOWNGRADE the provider itself
-  // schedules for the next renewal — that logic lives entirely in this
-  // one route, not spread across the UI.
-  const subscription = await applySubscriptionUpdate(
-    workspaceId,
-    { planId: planId as WorkspacePlan, status: "incomplete", billingProvider: existing?.billingProvider ?? "manual" },
-    uid
-  );
+  // Shared with /api/billing/checkout (see planRequestDecision): a
+  // LIVE entitlement — actively paying, or inside a trial that hasn't
+  // expired — is never interrupted by a plan request; only
+  // `requestedPlanId` is recorded. A duplicate (same checkout already
+  // started and awaiting payment) returns the existing record without
+  // a second write or purchase-request email.
+  const decision = planRequestDecision(existing, planId as WorkspacePlan);
+  const hasLiveEntitlement = decision.hasLiveEntitlement;
+
+  if (decision.isDuplicate && existing) {
+    return NextResponse.json({
+      success: true,
+      duplicate: true,
+      subscription: existing,
+      message: "Checkout for this plan is already started. It activates once payment is confirmed.",
+    });
+  }
+
+  // No real payment provider yet. Once a provider is connected, an
+  // UPGRADE could stay this simple (redirect to a proration checkout)
+  // while a DOWNGRADE the provider itself schedules for the next
+  // renewal — that logic lives entirely in this one route, not spread
+  // across the UI.
+  const subscription = await applySubscriptionUpdate(workspaceId, decision.patch, uid);
+
+  // Free needs no payment: resolved directly, no purchase request or email.
+  if (decision.isFreeSelection) {
+    await logPlatformAudit({ actorUid: uid, action: "subscription_status_changed", workspaceId, details: { event: "free_plan_selected", planId } });
+    return NextResponse.json({ success: true, subscription, message: "You're on the Free plan." });
+  }
 
   await logPlatformAudit({ actorUid: uid, action: "subscription_status_changed", workspaceId, details: { event: "plan_change_requested", planId } });
 
-  return NextResponse.json({ success: true, subscription, message: "Your plan change has been recorded. It activates once payment is confirmed." });
+  const workspaceSnap = await adminDb().collection("workspaces").doc(workspaceId).get();
+  await notifyPurchaseRequest({
+    workspaceId,
+    workspaceName: (workspaceSnap.data()?.name as string | undefined) ?? workspaceId,
+    planId: planId as WorkspacePlan,
+    event: "plan_change_requested",
+    requestedByEmail: (memberSnapshot.data()?.email as string | undefined) ?? null,
+  });
+
+  return NextResponse.json({
+    success: true,
+    subscription,
+    message: hasLiveEntitlement
+      ? "Your request has been recorded. Your current plan is unaffected until payment is confirmed."
+      : "Your plan change has been recorded. It activates once payment is confirmed.",
+  });
 }

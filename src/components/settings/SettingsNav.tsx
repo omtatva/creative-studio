@@ -41,9 +41,14 @@ const GROUPS = [
   {
     label: "People",
     items: [
-      { href: ROUTES.settingsUsers, label: "Users", icon: Users },
-      { href: ROUTES.settingsRoles, label: "Roles", icon: ShieldCheck },
-      { href: ROUTES.settingsAccessControl, label: "Access Control", icon: KeyRound, ownerAdminOnly: true },
+      // People & access administration is platform Super Admin only —
+      // a workspace owner/admin/employee doesn't see these at all (the
+      // pages themselves also refuse them, see SuperAdminOnly). The
+      // read-only Team page in the main sidebar is where members see
+      // who's in their workspace.
+      { href: ROUTES.settingsUsers, label: "Users", icon: Users, superAdminOnly: true },
+      { href: ROUTES.settingsRoles, label: "Roles", icon: ShieldCheck, superAdminOnly: true },
+      { href: ROUTES.settingsAccessControl, label: "Access Control", icon: KeyRound, superAdminOnly: true },
     ],
   },
   {
@@ -67,13 +72,15 @@ const GROUPS = [
 /** Left-hand sub-nav for the entire /settings section. */
 export function SettingsNav() {
   const pathname = usePathname();
-  const { canManageWorkspace } = useCurrentMemberRole();
+  const { canManageWorkspace, isSuperAdmin } = useCurrentMemberRole();
 
   return (
     <nav className="w-full shrink-0 space-y-6 lg:w-56">
       {GROUPS.map((group) => {
         const visibleItems = group.items.filter(
-          (item) => !("ownerAdminOnly" in item && item.ownerAdminOnly) || canManageWorkspace
+          (item) =>
+            (!("ownerAdminOnly" in item && item.ownerAdminOnly) || canManageWorkspace) &&
+            (!("superAdminOnly" in item && item.superAdminOnly) || isSuperAdmin)
         );
         if (visibleItems.length === 0) return null;
         return (

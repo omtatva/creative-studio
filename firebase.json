@@ -1,11 +1,13 @@
 {
   "firestore": {
     "rules": "firebase-config/firestore.rules",
-    "indexes": "firebase-config/firestore.indexes.json"
+    "indexes": "firebase-config/firestore.indexes.json",
+    "database": "(default)"
   },
   "storage": {
     "target": "rules",
-    "rules": "firebase-config/storage.rules"
+    "rules": "firebase-config/storage.rules",
+    "bucket": "creative-studio-176c0.firebasestorage.app"
   },
   "apphosting": {
     "backendId": "creative-studio-backend",
@@ -16,6 +18,7 @@
       "firebase-debug.log",
       "firebase-debug.*.log",
       "functions"
-    ]
+    ],
+    "alwaysDeployFromSource": false
   }
 }

@@ -31,10 +31,18 @@ export function useNotifications(take = 30) {
     }
     setIsLoading(true);
     const q = query(notificationsCol(workspaceId, firebaseUser.uid), orderBy("createdAt", "desc"), fbLimit(take));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setNotifications(snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as NotificationPayload & { createdAt: string }) })));
-      setIsLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        setNotifications(snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as NotificationPayload & { createdAt: string }) })));
+        setIsLoading(false);
+      },
+      (err) => {
+        console.error("[useNotifications] snapshot error:", err);
+        setNotifications([]);
+        setIsLoading(false);
+      }
+    );
     return unsubscribe;
   }, [workspaceId, firebaseUser, take]);
 

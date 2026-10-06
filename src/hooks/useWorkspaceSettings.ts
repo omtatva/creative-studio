@@ -34,10 +34,22 @@ export function useWorkspaceSettings() {
       return;
     }
     setIsLoading(true);
-    const unsubscribe = onSnapshot(settingsDoc(workspaceId), (snapshot) => {
-      setSettings(snapshot.exists() ? snapshot.data() : null);
-      setIsLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      settingsDoc(workspaceId),
+      (snapshot) => {
+        setSettings(snapshot.exists() ? snapshot.data() : null);
+        setIsLoading(false);
+      },
+      (err) => {
+        // Without this, a transient permission-denied (e.g. right after
+        // switching workspaces, before the new membership doc is
+        // readable) surfaces as an unhandled Firebase SDK console error
+        // instead of a recoverable loading state.
+        console.error("[useWorkspaceSettings] snapshot error:", err);
+        setSettings(null);
+        setIsLoading(false);
+      }
+    );
     return unsubscribe;
   }, [workspaceId]);
 

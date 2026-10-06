@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Check, Clock } from "lucide-react";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { PlanUsageSection } from "@/components/settings/PlanUsageSection";
@@ -10,11 +11,13 @@ import { Button } from "@/components/ui/Button";
 import { Loader } from "@/components/ui/Loader";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
 import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
+import { useChoosePlan } from "@/hooks/useChoosePlan";
 import { useToast } from "@/hooks/useToast";
 import { getWorkspaceSubscription } from "@/services/subscriptionService";
-import { createCheckoutSession, changePlan } from "@/services/billingService";
-import { SUBSCRIPTION_STATUS_LABEL, resolveEntitlements, isTrialExpired } from "@/lib/entitlements";
+import { planHeadline, resolveBillingView, getPlanRequest, EFFECTIVE_STATUS_LABEL } from "@/lib/billingDisplay";
+import { useBillingCacheResync } from "@/hooks/useBillingCacheResync";
 import { PLAN_ORDER, PLAN_DISPLAY_NAMES, PLAN_PRICING } from "@/lib/constants/planLimits";
+import { ROUTES } from "@/lib/constants/routes";
 import { formatDate } from "@/lib/utils/date";
 import { WorkspaceSubscription } from "@/types/billing.types";
 import { WorkspacePlan } from "@/types/workspace.types";
@@ -29,13 +32,20 @@ const CHOOSABLE_PLANS = PLAN_ORDER.filter((p) => p !== "enterprise") as Exclude<
  * activates anything itself, only records the request (see
  * /api/billing/checkout's doc comment for what happens once a real
  * payment provider is connected).
+ *
+ * Plan selection itself is NOT handled here for an upgrade — the
+ * "Upgrade" button below routes to the dedicated /billing/upgrade
+ * flow instead, so there's one canonical customer-facing place that
+ * actually initiates a paid-plan request (see TrialBanner.tsx, which
+ * routes there too). A same-or-lower "Switch" still acts inline here
+ * via the shared useChoosePlan hook, same server routes as before.
  */
 export default function BillingPlanSettingsPage() {
+  const router = useRouter();
   const { workspace, isLoading: isLoadingWorkspace } = useWorkspaceContext();
   const { canManageWorkspace, isLoading: isLoadingRole } = useCurrentMemberRole();
   const toast = useToast();
   const [subscription, setSubscription] = useState<WorkspaceSubscription | null | undefined>(undefined);
-  const [isChoosing, setIsChoosing] = useState<WorkspacePlan | null>(null);
 
   useEffect(() => {
     if (!workspace) return;
@@ -47,26 +57,23 @@ export default function BillingPlanSettingsPage() {
       });
   }, [workspace]);
 
-  async function handleChoosePlan(planId: Exclude<WorkspacePlan, "enterprise">) {
-    if (!workspace) return;
-    setIsChoosing(planId);
-    try {
-      const hasActiveSubscription = subscription && (subscription.status === "active" || subscription.status === "trialing");
-      const result = hasActiveSubscription ? await changePlan(workspace.id, planId) : await createCheckoutSession(workspace.id, planId);
-      if (!result.ok) {
-        if (result.violations?.length) {
-          toast.error(result.violations.join(" "));
-        } else {
-          toast.error(result.error ?? "Couldn't change your plan.");
-        }
-        return;
+  useBillingCacheResync(workspace, subscription);
+
+  const { isChoosing, choosePlan } = useChoosePlan(workspace?.id ?? null, subscription, async () => {
+    if (workspace) setSubscription(await getWorkspaceSubscription(workspace.id));
+  });
+
+  async function handleSwitchPlan(planId: Exclude<WorkspacePlan, "enterprise">) {
+    const result = await choosePlan(planId);
+    if (!result.ok) {
+      if (result.violations?.length) {
+        toast.error(result.violations.join(" "));
+      } else {
+        toast.error(result.error ?? "Couldn't change your plan.");
       }
-      toast.success(result.data?.message ?? "Plan change recorded.");
-      const refreshed = await getWorkspaceSubscription(workspace.id);
-      setSubscription(refreshed);
-    } finally {
-      setIsChoosing(null);
+      return;
     }
+    toast.success(result.message ?? "Plan change recorded.");
   }
 
   if (isLoadingWorkspace || isLoadingRole || !workspace) return <Loader label="Loading billing..." />;
@@ -80,17 +87,19 @@ export default function BillingPlanSettingsPage() {
     );
   }
 
-  // Computed LIVE from the subscription doc rather than trusted from
-  // workspace.plan/.subscriptionStatus — those are a cache that only
-  // re-syncs on the next real subscription event, so right after a
-  // trial's trialEnd passes they'd still show the stale trial plan
-  // until something else changes the subscription. See
-  // resolveEntitlements/isTrialExpired's doc comments.
-  const trialExpired = isTrialExpired(subscription ?? null);
-  const { plan: effectivePlan } = resolveEntitlements(subscription ?? null);
-  const status = subscription?.status ?? (workspace.subscriptionStatus === "pending_payment" ? "incomplete" : "active");
-  const isTrialing = subscription?.status === "trialing" && subscription.trialEnd && !trialExpired;
-  const trialDaysLeft = isTrialing ? Math.max(0, Math.ceil((new Date(subscription!.trialEnd!).getTime() - Date.now()) / (1000 * 60 * 60 * 24))) : null;
+  // Computed LIVE from the subscription doc (see resolveBillingView)
+  // rather than trusted from the workspace cache, which only re-syncs
+  // on the next subscription write — so an expired trial reads as
+  // expired here immediately, and useBillingCacheResync (above) asks
+  // the server to repair the cache for everything else.
+  const view = resolveBillingView(workspace, subscription);
+  const effectivePlan = view.plan;
+  const trialExpired = view.trialExpired;
+  const isTrialing = view.isTrialing;
+  const trialDaysLeft = view.trialDaysLeft;
+  const status = view.status;
+  const request = getPlanRequest(workspace, subscription);
+  const hasLivePlan = view.isTrialing || view.status === "active";
 
   return (
     <div className="flex flex-col gap-6">
@@ -103,21 +112,21 @@ export default function BillingPlanSettingsPage() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2">
-              <span className="text-lg font-semibold text-foreground">{PLAN_DISPLAY_NAMES[effectivePlan]}</span>
-              <Badge variant={trialExpired ? "warning" : status === "active" || status === "trialing" ? "success" : status === "past_due" ? "warning" : "default"}>
-                {trialExpired ? "Trial ended" : (SUBSCRIPTION_STATUS_LABEL[status as keyof typeof SUBSCRIPTION_STATUS_LABEL] ?? "Pending")}
+              <span className="text-lg font-semibold text-foreground">{planHeadline(effectivePlan, isTrialing)}</span>
+              <Badge variant={trialExpired || status === "pending_payment" || status === "past_due" ? "warning" : status === "active" || status === "trialing" ? "success" : "default"}>
+                {EFFECTIVE_STATUS_LABEL[status]}
               </Badge>
             </div>
             {trialDaysLeft !== null && (
               <p className="flex items-center gap-1.5 text-xs text-primary">
                 <Clock className="h-3.5 w-3.5" />
-                {PLAN_DISPLAY_NAMES[subscription!.planId]} trial — {trialDaysLeft} day{trialDaysLeft === 1 ? "" : "s"} remaining
+                {PLAN_DISPLAY_NAMES[subscription?.planId ?? "pro"]} trial — {trialDaysLeft} day{trialDaysLeft === 1 ? "" : "s"} remaining
               </p>
             )}
             {trialExpired && (
               <p className="flex items-center gap-1.5 text-xs text-warning">
                 <Clock className="h-3.5 w-3.5" />
-                Your {PLAN_DISPLAY_NAMES[subscription!.planId]} trial ended — you&apos;re back on {PLAN_DISPLAY_NAMES.starter} limits until you upgrade.
+                Your trial expired — you&apos;re on {PLAN_DISPLAY_NAMES.starter} limits until you upgrade.
               </p>
             )}
             {subscription?.currentPeriodEnd && (
@@ -125,22 +134,35 @@ export default function BillingPlanSettingsPage() {
                 {subscription.cancelAtPeriodEnd ? "Ends" : "Renews"} {formatDate(subscription.currentPeriodEnd)}
               </p>
             )}
-            {workspace.subscriptionStatus === "pending_payment" && workspace.pendingPlan && (
+            {request && (
               <p className="text-xs text-warning">
-                {PLAN_DISPLAY_NAMES[workspace.pendingPlan]} requested — activates once payment is confirmed.
+                {request.checkoutStarted
+                  ? `${PLAN_DISPLAY_NAMES[request.planId]} checkout started — activates once payment is confirmed.${hasLivePlan ? " Your current plan is unaffected until then." : ""}`
+                  : `${PLAN_DISPLAY_NAMES[request.planId]} requested — payment required.`}
               </p>
             )}
           </div>
+          {request && !request.checkoutStarted ? (
+            <Button size="sm" onClick={() => router.push(`${ROUTES.billingUpgrade}?plan=${request.planId}`)}>
+              Continue to Payment
+            </Button>
+          ) : trialExpired ? (
+            <Button size="sm" onClick={() => router.push(ROUTES.billingUpgrade)}>
+              Upgrade Plan
+            </Button>
+          ) : null}
         </div>
       </SettingsSection>
 
-      <PlanUsageSection workspace={workspace} />
+      <PlanUsageSection workspace={workspace} subscription={subscription} />
 
       <SettingsSection title="Change plan" description="Choose a plan — it activates once payment is confirmed, never immediately.">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           {CHOOSABLE_PLANS.map((planId) => {
             const pricing = PLAN_PRICING[planId];
-            const isCurrent = effectivePlan === planId && (status === "active" || (status === "trialing" && !trialExpired));
+            const isCurrent = effectivePlan === planId && hasLivePlan;
+            const isUpgrade = PLAN_ORDER.indexOf(planId) > PLAN_ORDER.indexOf(effectivePlan);
+            const isRequested = request?.planId === planId && request.checkoutStarted;
             return (
               <div key={planId} className={`flex flex-col gap-3 rounded-theme border p-4 ${isCurrent ? "border-primary bg-primary/5" : "border-border bg-surface"}`}>
                 <div>
@@ -153,9 +175,15 @@ export default function BillingPlanSettingsPage() {
                   <span className="flex items-center gap-1.5 text-xs font-medium text-primary">
                     <Check className="h-3.5 w-3.5" /> Current plan
                   </span>
+                ) : isRequested ? (
+                  <span className="text-xs font-medium text-warning">Checkout started — awaiting payment</span>
+                ) : isUpgrade ? (
+                  <Button size="sm" variant="outline" onClick={() => router.push(`${ROUTES.billingUpgrade}?plan=${planId}`)}>
+                    {request?.planId === planId ? "Continue to Payment" : "Upgrade"}
+                  </Button>
                 ) : (
-                  <Button size="sm" variant="outline" onClick={() => handleChoosePlan(planId)} isLoading={isChoosing === planId}>
-                    {PLAN_ORDER.indexOf(planId) > PLAN_ORDER.indexOf(effectivePlan) ? "Upgrade" : "Switch"}
+                  <Button size="sm" variant="outline" onClick={() => handleSwitchPlan(planId)} isLoading={isChoosing === planId}>
+                    Switch
                   </Button>
                 )}
               </div>

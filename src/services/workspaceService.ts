@@ -2,16 +2,13 @@ import {
   deleteDoc,
   doc,
   getDoc,
-  getDocs,
-  query,
   runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
-  where,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase/config";
-import { workspacesCol, workspaceDoc, workspaceSlugDoc, memberDoc, userDoc, settingsDoc, membersCol } from "@/lib/firebase/firestore";
+import { workspacesCol, workspaceDoc, workspaceSlugDoc, memberDoc, userDoc, settingsDoc } from "@/lib/firebase/firestore";
 import { uploadFile, workspaceLogoRef } from "@/lib/firebase/storage";
 import { getCurrentUser } from "@/lib/firebase/auth";
 import { CreateWorkspacePayload, Workspace } from "@/types/workspace.types";
@@ -189,15 +186,22 @@ export async function createWorkspace(
   );
 
   /**
-   * A paid plan picked on /pricing doesn't activate just because the
-   * user got this far — the workspace is created on the free plan's
-   * real limits, with the requested plan parked in `pendingPlan` and
-   * `subscriptionStatus: "pending_payment"`. A future Stripe webhook
-   * is what flips plan/limits to the paid tier and subscriptionStatus
-   * to "active"; nothing here charges anyone or grants paid limits.
+   * A self-serve paid plan (Pro/Business) picked on /pricing doesn't
+   * activate just because the user got this far — the workspace is
+   * created on the free plan's real limits, with the requested plan
+   * parked in `pendingPlan` and `subscriptionStatus: "pending_payment"`
+   * ("selected, payment not yet completed" — NOT "checkout started";
+   * no subscription doc and no purchase request exist until the
+   * customer clicks Continue to Payment on /billing/upgrade). A
+   * verified payment webhook is what flips plan/limits to the paid
+   * tier and the status to "active"; nothing here charges anyone or
+   * grants paid limits. Enterprise is sales-assisted (Contact Sales),
+   * so it is never marked pending payment — the workspace starts on
+   * Free like any other. Firestore rules lock these fields to exactly
+   * these shapes at creation and to server-only after.
    */
   const requestedPlan = payload.plan ?? DEFAULT_PLAN;
-  const isPaidPlanRequest = requestedPlan !== DEFAULT_PLAN;
+  const isPaidPlanRequest = requestedPlan === "pro" || requestedPlan === "business";
 
   await attemptWrite(
     `workspaces/${workspaceId}`,
@@ -341,6 +345,7 @@ function withWorkspaceDefaults(workspace: Workspace): Workspace {
     limits: workspace.limits ?? PLAN_LIMITS[plan],
     subscriptionStatus: workspace.subscriptionStatus ?? "active",
     pendingPlan: workspace.pendingPlan ?? null,
+    trialEnd: workspace.trialEnd ?? null,
   };
 }
 
@@ -370,21 +375,6 @@ export async function updateWorkspaceLogo(workspaceId: string, file: File): Prom
 }
 
 /**
- * Overrides ONE limit on THIS workspace's own `limits` map, independent
- * of its `plan` — see planService.ts: every limit check reads
- * `workspace.limits[key]` (a real per-workspace field, snapshotted from
- * PLAN_LIMITS at creation, see createWorkspace above), never the static
- * PLAN_LIMITS table directly, so writing here takes effect immediately
- * with no plan/billing change needed. `Infinity` is a valid, intentional
- * value — checkWorkspaceLimit already treats `!Number.isFinite(limit)`
- * as "unlimited" (see PLAN_LIMITS.enterprise using the same convention),
- * and Firestore's double type natively supports it.
- */
-export async function updateWorkspaceLimit(workspaceId: string, key: keyof Workspace["limits"], value: number): Promise<void> {
-  await updateDoc(workspaceDoc(workspaceId), { [`limits.${key}`]: value, updatedAt: serverTimestamp() } as never);
-}
-
-/**
  * Deletes a workspace — but deliberately an ACCESS cutoff, not a full
  * data wipe: removes every `members/{workspaceId}_*` doc, the
  * `settings/{workspaceId}` doc, and the `workspaces/{workspaceId}` doc
@@ -398,19 +388,24 @@ export async function updateWorkspaceLimit(workspaceId: string, key: keyof Works
  * wipe is a separate, much larger and irreversible operation this
  * doesn't attempt.
  *
- * Order matters: members and settings MUST be deleted before the
- * workspace doc itself. Both of their delete rules call
- * isWorkspaceOwner(workspaceId), which does a get() on
- * `workspaces/{workspaceId}` — get() on an already-deleted document
- * throws inside rule evaluation (the same pitfall documented throughout
- * firestore.rules), so deleting the workspace doc first would strand
- * every remaining members/settings doc as undeletable by anyone.
+ * Runs SERVER-SIDE (/api/workspaces/delete — the workspace's own owner
+ * or the Super Admin): firestore.rules makes `members` deletes
+ * server-only now that removing a member is Super Admin-only
+ * administration, so this can no longer loop over member docs from the
+ * browser. (The old ordering pitfall — rules' isWorkspaceOwner() does a
+ * get() on the workspace doc — doesn't apply to the Admin SDK.)
  */
 export async function deleteWorkspaceAccess(workspaceId: string): Promise<void> {
-  const memberSnapshot = await getDocs(query(membersCol(), where("workspaceId", "==", workspaceId)));
-  for (const memberDocSnap of memberSnapshot.docs) {
-    await deleteDoc(memberDocSnap.ref);
+  const user = getCurrentUser();
+  if (!user) throw new Error("You must be signed in.");
+  const idToken = await user.getIdToken();
+  const response = await fetch("/api/workspaces/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ workspaceId }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data?.error ?? "Couldn't delete this workspace.");
   }
-  await deleteDoc(settingsDoc(workspaceId));
-  await deleteDoc(workspaceDoc(workspaceId));
 }

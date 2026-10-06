@@ -18,10 +18,18 @@ export function useFileAnnotations(fileId: string | undefined) {
     }
     setIsLoading(true);
     const q = query(fileAnnotationsCol(fileId), orderBy("createdAt", "asc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setAnnotations(snapshot.docs.map((d) => d.data()));
-      setIsLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        setAnnotations(snapshot.docs.map((d) => d.data()));
+        setIsLoading(false);
+      },
+      (err) => {
+        console.error("[useFileAnnotations] snapshot error:", err);
+        setAnnotations([]);
+        setIsLoading(false);
+      }
+    );
     return unsubscribe;
   }, [fileId]);
 

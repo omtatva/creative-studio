@@ -25,12 +25,20 @@ export function useStages(projectId: string | undefined) {
       where("projectId", "==", projectId),
       orderBy("createdAt", "desc")
     );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      // Filtered client-side (not via a Firestore where clause) so this
-      // doesn't need its own composite index alongside workspaceId+projectId+createdAt.
-      setStages(snapshot.docs.map((d) => d.data()).filter((s) => !s.isArchived));
-      setIsLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        // Filtered client-side (not via a Firestore where clause) so this
+        // doesn't need its own composite index alongside workspaceId+projectId+createdAt.
+        setStages(snapshot.docs.map((d) => d.data()).filter((s) => !s.isArchived));
+        setIsLoading(false);
+      },
+      (err) => {
+        console.error("[useStages] snapshot error:", err);
+        setStages([]);
+        setIsLoading(false);
+      }
+    );
     return unsubscribe;
   }, [workspaceId, projectId]);
 

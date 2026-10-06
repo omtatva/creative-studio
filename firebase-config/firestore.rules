@@ -246,7 +246,27 @@ service cloud.firestore {
 
     match /workspaces/{workspaceId} {
       allow read: if isWorkspaceMember(workspaceId) || isSuperAdmin();
-      allow create: if isSignedIn();
+      // SECURITY (billing-cache lock): plan/subscriptionStatus/
+      // pendingPlan/trialEnd are a SERVER-CONTROLLED display cache of
+      // the authoritative subscription (resolveEntitlements reads the
+      // subscription doc, never these). A client creating its own
+      // workspace may only assert the two shapes createWorkspace()
+      // legitimately writes — Free + active, or Free + pending_payment
+      // with a self-serve plan (pro/business) parked in pendingPlan —
+      // and never a trial end. `limits` is not validated here (the
+      // plan config is Super-Admin-editable, so rules can't hardcode
+      // it); instead the client triggers a server resync right after
+      // creating the workspace (see useWorkspace.ts), which overwrites
+      // it with the authoritative value. Everything after creation is
+      // server-only — see the update rule below.
+      allow create: if isSignedIn()
+        && request.resource.data.get('plan', 'starter') == 'starter'
+        && request.resource.data.get('subscriptionStatus', 'active') in ['active', 'pending_payment']
+        && (request.resource.data.get('pendingPlan', null) == null
+            || request.resource.data.get('pendingPlan', null) in ['pro', 'business'])
+        && (request.resource.data.get('subscriptionStatus', 'active') == 'pending_payment')
+           == (request.resource.data.get('pendingPlan', null) != null)
+        && request.resource.data.get('trialEnd', null) == null;
       // Profile fields (name, logo, timezone, ...) are editable by
       // owner OR admin, matching every other "manage this workspace"
       // action in this app (settings, members, roles). Deleting the
@@ -262,13 +282,31 @@ service cloud.firestore {
       // check atomically before allowing a create/upload — without
       // this exclusion, an owner/admin could just set them directly
       // (this rule otherwise allows any field change) and defeat the
-      // entire mechanism. Admin-SDK-write-only for these three fields
-      // specifically; every other field (name, logo, limits, ...) is
-      // unaffected — unchanged from before.
+      // entire mechanism. Admin-SDK-write-only for these three fields.
+      // SECURITY (billing-cache lock): plan/limits/subscriptionStatus/
+      // pendingPlan/trialEnd are ALSO Admin-SDK-write-only now — they're
+      // the billing/entitlement display cache, written only by
+      // billingAdmin.ts (every subscription write + the lazy resync).
+      // Nothing authoritative reads them (resolveEntitlements reads the
+      // subscription doc), but while an owner/admin could edit them
+      // they could forge their own plan badge, usage display, and the
+      // plan counts Super Admin sees. Every other field (name, logo,
+      // timezone, ...) stays editable by owner/admin as before.
       allow update: if isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin'])
         && request.resource.data.get('projectCount', null) == resource.data.get('projectCount', null)
         && request.resource.data.get('memberCount', null) == resource.data.get('memberCount', null)
-        && request.resource.data.get('storageBytesUsed', null) == resource.data.get('storageBytesUsed', null);
+        && request.resource.data.get('storageBytesUsed', null) == resource.data.get('storageBytesUsed', null)
+        && request.resource.data.get('plan', null) == resource.data.get('plan', null)
+        && request.resource.data.get('limits', null) == resource.data.get('limits', null)
+        && request.resource.data.get('subscriptionStatus', null) == resource.data.get('subscriptionStatus', null)
+        && request.resource.data.get('pendingPlan', null) == resource.data.get('pendingPlan', null)
+        && request.resource.data.get('trialEnd', null) == resource.data.get('trialEnd', null)
+        // SECURITY (member-administration lock): `ownerId` is what
+        // isWorkspaceOwner() trusts. While an owner/admin could edit it
+        // they could hand themselves (or anyone) workspace ownership —
+        // "change workspace owner" is Super Admin administration, so no
+        // client may change it. (No UI changes it today.)
+        && request.resource.data.get('ownerId', null) == resource.data.get('ownerId', null);
       allow delete: if isWorkspaceOwner(workspaceId) || isSuperAdmin();
 
       match /activity_logs/{logId} {
@@ -373,7 +411,25 @@ service cloud.firestore {
     }
 
     match /members/{memberId} {
-      allow read: if isSignedIn();
+      // SECURITY (member-administration lock): readable by the member
+      // themself, by anyone in the SAME workspace (collaboration — the
+      // Team page, member pickers, project member lists), and by Super
+      // Admin — no longer by every signed-in user on the platform.
+      // Clause order matters: the id-based self clause and
+      // isSuperAdmin() never touch `resource`, so a get() on a doc that
+      // doesn't exist yet (e.g. the share page probing the caller's own
+      // membership) resolves to "no access" instead of a rules error;
+      // the `resource.data` clauses are guarded by `resource != null`.
+      // The userId / workspaceId clauses are written in terms of the
+      // fields the app's queries filter on (where userId == uid, where
+      // workspaceId == X), so Firestore's static query check accepts
+      // them — same pattern as project_members below.
+      allow read: if isSignedIn() && (
+        memberId.matches('.*_' + request.auth.uid)
+        || isSuperAdmin()
+        || (resource != null && resource.data.userId == request.auth.uid)
+        || (resource != null && isWorkspaceMember(resource.data.workspaceId))
+      );
 
       // INITIAL OWNER BOOTSTRAP ONLY. A brand-new workspace has no
       // members yet, so a normal "must already be a member to write
@@ -414,24 +470,22 @@ service cloud.firestore {
         && request.resource.data.role == 'owner'
         && get(/databases/$(database)/documents/workspaces/$(request.resource.data.workspaceId)).data.ownerId == request.auth.uid;
 
-      // Admin can manage (change role, remove) any member EXCEPT the
-      // owner's own doc, and can never grant/hold the 'owner' role
-      // itself — closes off privilege escalation (an admin demoting,
-      // deleting, or overwriting the actual owner, or promoting
-      // someone — including themselves — to owner). Only the real
-      // owner can touch an owner-role doc or hand out 'owner'.
-      allow update: if isWorkspaceOwner(resource.data.workspaceId)
-        || (isWorkspaceMemberWithRole(resource.data.workspaceId, ['admin'])
-          && resource.data.role != 'owner'
-          && request.resource.data.role != 'owner');
-      // isSuperAdmin() added alongside the existing owner/admin paths so
-      // deleteWorkspaceAccess (see workspaceService.ts) can also remove
-      // every member doc — including the workspace's own owner's —
-      // when Super Admin deletes a workspace it doesn't personally
-      // belong to from Settings > All Workspaces.
-      allow delete: if isWorkspaceOwner(resource.data.workspaceId)
-        || (isWorkspaceMemberWithRole(resource.data.workspaceId, ['admin']) && resource.data.role != 'owner')
-        || isSuperAdmin();
+      // SECURITY (member-administration lock): changing a member's role,
+      // disabling/restoring them, and removing them are WORKSPACE MEMBER
+      // ADMINISTRATION — platform Super Admin only, performed solely by
+      // /api/workspaces/members (Admin SDK, authorized with
+      // verifySuperAdminAuth). No client — workspace owner, admin,
+      // employee, or even Super Admin's browser — may update or delete a
+      // `members` doc directly; this used to allow the workspace owner
+      // and admins, which made these rules the only boundary and let any
+      // owner/admin skip the UI entirely. The workspace's own deletion
+      // (which removes its member docs) runs on the server too — see
+      // /api/workspaces/delete. Creating the very first (owner) member
+      // doc during workspace creation is the bootstrap rule above and is
+      // unchanged; invite acceptance creates members server-side
+      // (/api/invites/accept).
+      allow update: if false;
+      allow delete: if false;
     }
 
     match /settings/{workspaceId} {
@@ -460,7 +514,20 @@ service cloud.firestore {
       // DELETE is owner or Super Admin — deleteWorkspaceAccess removes
       // this doc as part of a full workspace deletion (see above).
       allow create: if isSignedIn() && request.resource.data.workspaceId == workspaceId;
-      allow update: if isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin']) || isSuperAdmin();
+      // SECURITY (member-administration lock): `sidebarConfig` (which
+      // pages/widgets members see) and `fieldSecurity` (feature areas
+      // hidden workspace-wide) are ACCESS POLICY — the Access Control
+      // page — and Super Admin only. Everything else in this doc
+      // (branding, theme, AI/storage/notification/security preferences,
+      // project/task/review defaults, ...) stays editable by owner/admin
+      // exactly as before: this only requires those two fields be
+      // unchanged unless the writer is Super Admin.
+      allow update: if isSuperAdmin()
+        || (isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin'])
+          && request.resource.data.get('sidebarConfig', null) == resource.data.get('sidebarConfig', null)
+          && request.resource.data.get('fieldSecurity', null) == resource.data.get('fieldSecurity', null));
+      // Deleting the settings doc happens inside /api/workspaces/delete
+      // (Admin SDK) now; kept for Super Admin / owner direct access as before.
       allow delete: if isWorkspaceOwner(workspaceId) || isSuperAdmin();
     }
 
@@ -839,15 +906,18 @@ service cloud.firestore {
       // re-checked against the caller's OWN membership so an
       // owner/admin of workspace A can never create an invite that
       // claims to belong to workspace B.
-      allow create: if (isWorkspaceMemberWithRole(request.resource.data.workspaceId, ['owner', 'admin']) || isSuperAdmin())
+      // SECURITY (member-administration lock): inviting people into a
+      // workspace is member administration — Super Admin only, no
+      // longer the workspace owner/admin. (Role is still restricted to
+      // non-owner so an invite can never grant Owner.)
+      allow create: if isSuperAdmin()
         && request.resource.data.role in ['admin', 'member', 'viewer'];
 
       // Either an owner/admin managing the invite (resend/cancel), or
       // the invitee themselves accepting it — which may ONLY flip
       // status pending -> accepted and can never change which
       // workspace/email/role the invite actually grants.
-      allow update: if isWorkspaceMemberWithRole(resource.data.workspaceId, ['owner', 'admin'])
-        || isSuperAdmin()
+      allow update: if isSuperAdmin()
         || (isSignedIn()
           && resource.data.email == request.auth.token.email
           && resource.data.status == 'pending'
@@ -856,7 +926,7 @@ service cloud.firestore {
           && request.resource.data.email == resource.data.email
           && request.resource.data.role == resource.data.role);
 
-      allow delete: if isWorkspaceMemberWithRole(resource.data.workspaceId, ['owner', 'admin']) || isSuperAdmin();
+      allow delete: if isSuperAdmin();
     }
 
     // Custom-role definitions gate real permissions (see the Access
@@ -866,10 +936,14 @@ service cloud.firestore {
     // a role's permissions array directly.
     match /workspace_roles/{roleId} {
       allow read: if isWorkspaceMember(resource.data.workspaceId);
-      allow create: if isWorkspaceMemberWithRole(request.resource.data.workspaceId, ['owner', 'admin']);
-      allow update: if isWorkspaceMemberWithRole(resource.data.workspaceId, ['owner', 'admin'])
+      // SECURITY (member-administration lock): defining roles and what
+      // each grants is member/access administration — Super Admin only,
+      // no longer the workspace owner/admin. Read stays open to
+      // workspace members (collaboration).
+      allow create: if isSuperAdmin();
+      allow update: if isSuperAdmin()
         && request.resource.data.workspaceId == resource.data.workspaceId;
-      allow delete: if isWorkspaceMemberWithRole(resource.data.workspaceId, ['owner', 'admin']);
+      allow delete: if isSuperAdmin();
     }
 
     // Append-only compliance trail: any member can create an entry

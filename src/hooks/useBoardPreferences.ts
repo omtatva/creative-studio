@@ -26,10 +26,18 @@ export function useBoardPreferences(boardId: string | undefined) {
     setIsLoading(true);
 
     getOrCreateBoardPreference(workspaceId, boardId, firebaseUser.uid).then(() => {
-      unsubscribe = onSnapshot(boardPreferenceDoc(boardId, firebaseUser.uid), (snapshot) => {
-        setPreference(snapshot.exists() ? snapshot.data() : null);
-        setIsLoading(false);
-      });
+      unsubscribe = onSnapshot(
+        boardPreferenceDoc(boardId, firebaseUser.uid),
+        (snapshot) => {
+          setPreference(snapshot.exists() ? snapshot.data() : null);
+          setIsLoading(false);
+        },
+        (err) => {
+          console.error("[useBoardPreferences] snapshot error:", err);
+          setPreference(null);
+          setIsLoading(false);
+        }
+      );
     });
 
     return () => unsubscribe?.();

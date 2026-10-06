@@ -1,9 +1,10 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getDocs } from "firebase/firestore";
 import { useAuthContext } from "./AuthContext";
 import { getWorkspace, setActiveWorkspace } from "@/services/workspaceService";
+import { resyncBillingCache } from "@/services/billingService";
 import { getUserWorkspaceMemberships } from "@/services/userService";
 import { workspacesCol } from "@/lib/firebase/firestore";
 import { isSuperAdminUser } from "@/lib/constants/itSupport";
@@ -48,11 +49,40 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [isSwitching, setIsSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Workspaces whose billing display cache has been verified against
+  // the authoritative subscription this session — see resolveBillingCache.
+  const billingResolvedFor = useRef<Set<string>>(new Set());
+
+  /**
+   * The workspace doc's `plan`/`limits`/`subscriptionStatus`/
+   * `pendingPlan`/`trialEnd` are a display cache that nothing refreshes
+   * on a timer, and workspaces last synced before `trialEnd` was cached
+   * carry no way to tell a live trial from an expired one. So the first
+   * time THIS session loads a workspace, ask the server to resolve it
+   * from the authoritative subscription (a trusted Admin-SDK path that
+   * takes no billing input from here) and repair the cache — so every
+   * surface reading `workspace.plan`/`.limits` (planService, aiService,
+   * limit checks, settings pages, ...) is correct from the member's OWN
+   * session, without waiting for an owner/admin/Super Admin to visit.
+   * A no-op round trip (no write) when the cache is already right; any
+   * failure just leaves the cache as it was — the display layer
+   * (billingDisplay.ts) never shows an unverifiable trial as active.
+   */
+  async function resolveBillingCache(workspaceId: string) {
+    if (billingResolvedFor.current.has(workspaceId)) return;
+    billingResolvedFor.current.add(workspaceId);
+    const result = await resyncBillingCache(workspaceId).catch(() => null);
+    if (!result?.ok || !result.data?.changed) return;
+    const fresh = await getWorkspace(workspaceId).catch(() => null);
+    if (fresh) setWorkspace((prev) => (prev && prev.id === fresh.id ? fresh : prev));
+  }
+
   async function load(workspaceId: string) {
     try {
       const ws = await getWorkspace(workspaceId);
       setWorkspace(ws);
       setError(null);
+      if (ws) void resolveBillingCache(ws.id);
       if (!ws) {
         if (isSuperAdminUser(profile)) {
           // Super Admin (itSupport.ts) is a platform-wide admin identity,

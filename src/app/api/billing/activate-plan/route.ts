@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySuperAdminAuth, AuthVerificationError } from "@/lib/server/firebaseAdmin";
-import { activatePlanManually } from "@/lib/server/billingAdmin";
+import { activatePlanManually, getSubscriptionAdmin } from "@/lib/server/billingAdmin";
 import { logPlatformAudit } from "@/lib/server/platformAudit";
 import { PLAN_LIMITS } from "@/lib/constants/planLimits";
 import type { WorkspacePlan } from "@/types/workspace.types";
@@ -8,15 +8,14 @@ import type { WorkspacePlan } from "@/types/workspace.types";
 export const runtime = "nodejs";
 
 /**
- * Super-Admin-only manual confirmation that a workspace's Free/Pro/
- * Business subscription is genuinely active — the stand-in for a
- * payment-provider webhook until one is connected (see
- * /api/billing/webhook's doc comment). Use this to confirm a payment
- * that happened outside the app (bank transfer, an invoice paid
- * directly, a sales-assisted deal that isn't Enterprise) without
- * waiting on real payment-provider integration. Enterprise activation
- * has its own route (/api/billing/activate-enterprise) since that one
- * is tied to closing a specific sales lead.
+ * Super-Admin-only MANUAL / COMPLIMENTARY activation of a workspace's
+ * Free/Pro/Business plan. This records NO payment: the subscription
+ * becomes `active` with `paymentStatus: "not_started"`, and Super
+ * Admin shows it as "Complimentary / Manual" — never "Paid". Only a
+ * verified payment-provider webhook event (see /api/billing/webhook)
+ * can mark a subscription paid. Enterprise activation has its own
+ * route (/api/billing/activate-enterprise) since that one is tied to
+ * closing a specific sales lead.
  */
 export async function POST(request: NextRequest) {
   let superAdminUid: string;
@@ -39,7 +38,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "A valid workspaceId and planId are required." }, { status: 400 });
   }
 
+  const previous = await getSubscriptionAdmin(workspaceId);
   const subscription = await activatePlanManually(workspaceId, planId as WorkspacePlan, superAdminUid);
-  await logPlatformAudit({ actorUid: superAdminUid, action: "plan_activated", workspaceId, details: { planId } });
+  // Actor + timestamp are recorded by logPlatformAudit itself
+  // (actorUid/createdAt). No "reason" field is captured: this route and
+  // its Super Admin UI don't collect one today.
+  await logPlatformAudit({
+    actorUid: superAdminUid,
+    action: "manual_plan_activation",
+    workspaceId,
+    details: {
+      planId,
+      previousPlanId: previous?.planId ?? null,
+      previousStatus: previous?.status ?? null,
+      billing: "manual_comp",
+    },
+  });
   return NextResponse.json({ success: true, subscription });
 }

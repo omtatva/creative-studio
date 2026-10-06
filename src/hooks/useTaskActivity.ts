@@ -18,10 +18,18 @@ export function useTaskActivity(taskId: string | undefined) {
     }
     setIsLoading(true);
     const q = query(taskActivityCol(taskId), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setEntries(snapshot.docs.map((d) => d.data()));
-      setIsLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        setEntries(snapshot.docs.map((d) => d.data()));
+        setIsLoading(false);
+      },
+      (err) => {
+        console.error("[useTaskActivity] snapshot error:", err);
+        setEntries([]);
+        setIsLoading(false);
+      }
+    );
     return unsubscribe;
   }, [taskId]);
 

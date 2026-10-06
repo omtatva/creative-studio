@@ -8,6 +8,7 @@ import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { Button } from "@/components/ui/Button";
 import { Loader } from "@/components/ui/Loader";
 import { useCustomRoles } from "@/hooks/useCustomRoles";
+import { SuperAdminOnly } from "@/components/auth/SuperAdminOnly";
 import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
 import { useWorkspaceSettings } from "@/hooks/useWorkspaceSettings";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
@@ -42,10 +43,10 @@ const FIELD_TOGGLES: { key: keyof FieldSecuritySettings; label: string; wired: b
  * Roles' form modal edits — one role, one permissions field, two
  * different editing surfaces.
  */
-export default function AccessControlPage() {
+function AccessControlPageContent() {
   const { roles, isLoading: isLoadingRoles } = useCustomRoles();
   const { settings, isLoading: isLoadingSettings, save } = useWorkspaceSettings();
-  const { canManageWorkspace, isLoading: isLoadingRole } = useCurrentMemberRole();
+  const { canManageMembers, isLoading: isLoadingRole } = useCurrentMemberRole();
   const { workspaceId } = useWorkspaceContext();
   const { firebaseUser, profile } = useAuthContext();
   const toast = useToast();
@@ -114,11 +115,11 @@ export default function AccessControlPage() {
 
   if (isLoadingSettings || isLoadingRole) return <Loader label="Loading access control..." />;
 
-  if (!canManageWorkspace) {
+  if (!canManageMembers) {
     return (
       <div className="flex flex-col gap-2">
         <h1 className="text-xl font-semibold text-foreground">Access Control</h1>
-        <p className="text-sm text-foreground-muted">Only workspace owners and admins can view this page.</p>
+        <p className="text-sm text-foreground-muted">Only the platform administrator can view this page.</p>
       </div>
     );
   }
@@ -189,5 +190,14 @@ export default function AccessControlPage() {
         </div>
       </SettingsSection>
     </div>
+  );
+}
+
+/** Roles, module permissions, page/widget/field access: platform Super Admin only — see SuperAdminOnly. */
+export default function AccessControlPage() {
+  return (
+    <SuperAdminOnly title="Access Control">
+      <AccessControlPageContent />
+    </SuperAdminOnly>
   );
 }

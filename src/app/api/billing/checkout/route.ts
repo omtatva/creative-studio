@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyRequestAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
-import { applySubscriptionUpdate } from "@/lib/server/billingAdmin";
+import { applySubscriptionUpdate, getSubscriptionAdmin, planRequestDecision } from "@/lib/server/billingAdmin";
 import { logPlatformAudit } from "@/lib/server/platformAudit";
 import { enforceRateLimit, RateLimitExceededError } from "@/lib/server/rateLimit";
+import { notifyPurchaseRequest } from "@/lib/server/billingNotify";
 import { PLAN_LIMITS } from "@/lib/constants/planLimits";
 import type { WorkspacePlan } from "@/types/workspace.types";
 
@@ -80,18 +81,46 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unknown plan." }, { status: 400 });
   }
 
-  const subscription = await applySubscriptionUpdate(
-    workspaceId,
-    { planId: planId as WorkspacePlan, status: "incomplete", billingProvider: "manual" },
-    uid
-  );
+  const existing = await getSubscriptionAdmin(workspaceId);
+  const decision = planRequestDecision(existing, planId as WorkspacePlan);
+
+  // Same checkout already started and still awaiting payment — return
+  // it as-is: no second write, audit entry, or purchase-request email.
+  if (decision.isDuplicate && existing) {
+    return NextResponse.json({
+      success: true,
+      duplicate: true,
+      checkoutUrl: null as string | null,
+      subscription: existing,
+      message: "Checkout for this plan is already started. It activates once payment is confirmed.",
+    });
+  }
+
+  const subscription = await applySubscriptionUpdate(workspaceId, decision.patch, uid);
+
+  // Free needs no payment: resolved directly, no purchase request or email.
+  if (decision.isFreeSelection) {
+    await logPlatformAudit({ actorUid: uid, action: "subscription_status_changed", workspaceId, details: { event: "free_plan_selected", planId } });
+    return NextResponse.json({ success: true, checkoutUrl: null as string | null, subscription, message: "You're on the Free plan." });
+  }
 
   await logPlatformAudit({ actorUid: uid, action: "subscription_status_changed", workspaceId, details: { event: "checkout_created", planId } });
+
+  const workspaceSnap = await adminDb().collection("workspaces").doc(workspaceId).get();
+  await notifyPurchaseRequest({
+    workspaceId,
+    workspaceName: (workspaceSnap.data()?.name as string | undefined) ?? workspaceId,
+    planId: planId as WorkspacePlan,
+    event: "checkout_created",
+    requestedByEmail: (memberSnapshot.data()?.email as string | undefined) ?? null,
+  });
 
   return NextResponse.json({
     success: true,
     checkoutUrl: null as string | null,
     subscription,
-    message: "Your plan change has been recorded. It activates once payment is confirmed.",
+    message: decision.hasLiveEntitlement
+      ? "Your request has been recorded. Your current plan is unaffected until payment is confirmed."
+      : "Your plan change has been recorded. It activates once payment is confirmed.",
   });
 }

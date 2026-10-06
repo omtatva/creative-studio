@@ -6,6 +6,7 @@ import { SettingsSection } from "@/components/settings/SettingsSection";
 import { GmailConnectionSection } from "@/components/settings/GmailConnectionSection";
 import { InviteUserModal } from "@/components/settings/InviteUserModal";
 import { Button } from "@/components/ui/Button";
+import { SuperAdminOnly } from "@/components/auth/SuperAdminOnly";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
@@ -33,7 +34,7 @@ const ROLE_VARIANT: Record<MemberRole, "info" | "success" | "default" | "warning
   viewer: "warning",
 };
 
-export default function UsersSettingsPage() {
+function UsersSettingsPageContent() {
   const { members, isLoading } = useWorkspaceMembers();
   const { invites, isLoading: isLoadingInvites, error: invitesError } = useInvites();
   const { firebaseUser, profile } = useAuthContext();
@@ -62,7 +63,7 @@ export default function UsersSettingsPage() {
       return;
     }
     if (!canManageMembers) {
-      toast.error("Only workspace owners and admins can invite members.");
+      toast.error("Only the platform administrator can invite members.");
       return;
     }
     const normalizedEmail = values.email.trim().toLowerCase();
@@ -135,7 +136,7 @@ export default function UsersSettingsPage() {
     if (!workspaceId) return;
     setBusyUid(member.userId);
     try {
-      await changeMemberRole(workspaceId, member.userId, role, actor());
+      await changeMemberRole(workspaceId, member.userId, role);
       toast.success(`${member.displayName}'s role updated`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't update role");
@@ -148,7 +149,7 @@ export default function UsersSettingsPage() {
     if (!workspaceId) return;
     setBusyUid(member.userId);
     try {
-      await setMemberDisabled(workspaceId, member.userId, member.status !== "suspended", actor());
+      await setMemberDisabled(workspaceId, member.userId, member.status !== "suspended");
       toast.success(member.status === "suspended" ? `${member.displayName} re-enabled` : `${member.displayName} disabled`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't update member");
@@ -160,7 +161,7 @@ export default function UsersSettingsPage() {
   async function handleRemove() {
     if (!workspaceId || !removeTarget) return;
     try {
-      await removeMember(workspaceId, removeTarget.userId, actor());
+      await removeMember(workspaceId, removeTarget.userId);
       toast.success(`${removeTarget.displayName} removed`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't remove member");
@@ -309,5 +310,14 @@ export default function UsersSettingsPage() {
         isDanger
       />
     </div>
+  );
+}
+
+/** Workspace member & access administration is platform Super Admin only — see SuperAdminOnly. */
+export default function UsersSettingsPage() {
+  return (
+    <SuperAdminOnly title="Users">
+      <UsersSettingsPageContent />
+    </SuperAdminOnly>
   );
 }

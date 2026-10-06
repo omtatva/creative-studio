@@ -30,10 +30,18 @@ export function useWorkspaceActivity(take = 30) {
     }
     setIsLoading(true);
     const q = query(activityLogsCol(workspaceId), orderBy("createdAt", "desc"), fbLimit(take));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setEntries(snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as ActivityLogEntry & { createdAt: string }) })));
-      setIsLoading(false);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        setEntries(snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as ActivityLogEntry & { createdAt: string }) })));
+        setIsLoading(false);
+      },
+      (err) => {
+        console.error("[useWorkspaceActivity] snapshot error:", err);
+        setEntries([]);
+        setIsLoading(false);
+      }
+    );
     return unsubscribe;
   }, [workspaceId, take]);
 
