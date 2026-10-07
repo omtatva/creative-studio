@@ -90,6 +90,30 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "storagePath doesn't match this workspace/project." }, { status: 400 });
   }
 
+  // `url` / `thumbnailUrl` are stored and later rendered as <a href> /
+  // <img src> / <video src> for every member who opens the file, so a
+  // client-supplied value must be a real Firebase Storage download URL
+  // for THIS bucket — never `javascript:`, `data:`, or an external
+  // host (stored-link XSS / tracking-pixel vector). The main file's URL
+  // must also point at the exact object being finalized.
+  const bucketName = adminStorage().name;
+  const isOwnBucketUrl = (value: string): URL | null => {
+    try {
+      const u = new URL(value);
+      return u.protocol === "https:" && u.hostname === "firebasestorage.googleapis.com" && u.pathname.startsWith(`/v0/b/${bucketName}/o/`) ? u : null;
+    } catch {
+      return null;
+    }
+  };
+  const mainUrl = isOwnBucketUrl(body.url);
+  const mainObjectPath = mainUrl ? decodeURIComponent(mainUrl.pathname.slice(`/v0/b/${bucketName}/o/`.length)) : null;
+  if (!mainUrl || mainObjectPath !== storagePath) {
+    return NextResponse.json({ error: "url must be this file's Firebase Storage download URL." }, { status: 400 });
+  }
+  if (body.thumbnailUrl && !isOwnBucketUrl(body.thumbnailUrl)) {
+    return NextResponse.json({ error: "thumbnailUrl must be a Firebase Storage download URL." }, { status: 400 });
+  }
+
   const [memberSnap, projectMemberSnap] = await Promise.all([
     adminDb().collection("members").doc(`${workspaceId}_${uid}`).get(),
     adminDb().collection("project_members").doc(`${projectId}_${uid}`).get(),
@@ -99,7 +123,15 @@ export async function POST(request: NextRequest) {
   const projectRole = projectMemberSnap.exists ? (projectMemberSnap.data()?.role as string | undefined) : undefined;
   const canWrite = isWorkspaceAdmin || (projectMemberSnap.exists && projectRole !== "viewer");
   if (!canWrite) {
-    return NextResponse.json({ error: "You don't have permission to upload files to this project." }, { status: 403 });
+    // Say WHY, so a "no permission" report can be told apart instantly:
+    // not in this workspace, a Viewer on the project, or simply never
+    // added to the project.
+    const reason = !memberSnap.exists
+      ? "you're not a member of this workspace"
+      : projectRole === "viewer"
+        ? "your role on this project is Viewer"
+        : "you haven't been added to this project";
+    return NextResponse.json({ error: `You don't have permission to upload files to this project — ${reason}.`, code: "INSUFFICIENT_ROLE" }, { status: 403 });
   }
 
   // Verify the project actually belongs to this workspace — same
@@ -136,6 +168,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: err.message, code: err.code }, { status: 403 });
     }
     console.error("[files/finalize] quota reservation failed:", err);
+    // The object is already in Storage but will never get a file record
+    // (so it would be unaccounted-for bytes) — remove it; the client
+    // retries the whole upload.
+    await adminStorage()
+      .file(storagePath)
+      .delete()
+      .catch((deleteErr) => console.error("[files/finalize] failed to delete unrecorded upload:", deleteErr));
     return NextResponse.json({ error: "Couldn't verify this workspace's storage quota. Try again in a moment." }, { status: 503 });
   }
 

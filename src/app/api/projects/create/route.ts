@@ -64,7 +64,8 @@ export async function POST(request: NextRequest) {
   const memberSnap = await adminDb().collection("members").doc(`${workspaceId}_${uid}`).get();
   const role = memberSnap.exists ? (memberSnap.data()?.role as string | undefined) : undefined;
   if (!role || !["owner", "admin", "member"].includes(role)) {
-    return NextResponse.json({ error: "You don't have permission to create projects in this workspace.", code: "INSUFFICIENT_ROLE" }, { status: 403 });
+    const reason = !memberSnap.exists ? "you're not a member of this workspace" : `your role (${role ?? "unknown"}) can't create projects`;
+    return NextResponse.json({ error: `You don't have permission to create projects in this workspace — ${reason}.`, code: "INSUFFICIENT_ROLE" }, { status: 403 });
   }
 
   try {

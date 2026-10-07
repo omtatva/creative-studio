@@ -104,12 +104,26 @@ async function countReal(metric: QuotaMetric, workspaceId: string): Promise<numb
     // documents isn't needed (Firestore computes this server-side),
     // but unlike .count() this reads every matched document's field,
     // so it's still reserved for backfill/resync, never the hot path.
-    const snap = await adminDb()
-      .collection("files")
-      .where("workspaceId", "==", workspaceId)
-      .aggregate({ total: AggregateField.sum("sizeBytes") })
-      .get();
-    return snap.data().total ?? 0;
+    // The SUM aggregate needs the composite index (workspaceId, sizeBytes)
+    // in firestore.indexes.json. If that index is missing or still
+    // building (FAILED_PRECONDITION), fall back to summing the same
+    // field from the documents themselves — slower but identical in
+    // result and needing only the automatic single-field index — so the
+    // quota counter can always initialize and an upload is never failed
+    // for every user just because an index hasn't been deployed yet.
+    try {
+      const snap = await adminDb()
+        .collection("files")
+        .where("workspaceId", "==", workspaceId)
+        .aggregate({ total: AggregateField.sum("sizeBytes") })
+        .get();
+      return snap.data().total ?? 0;
+    } catch (err) {
+      if ((err as { code?: number }).code !== 9) throw err;
+      console.warn("[workspaceQuota] storage SUM aggregate index unavailable — summing documents instead.");
+      const docs = await adminDb().collection("files").where("workspaceId", "==", workspaceId).select("sizeBytes").get();
+      return docs.docs.reduce((sum, d) => sum + (Number(d.data().sizeBytes) || 0), 0);
+    }
   }
   const snap = await adminDb().collection("members").where("workspaceId", "==", workspaceId).count().get();
   return snap.data().count;
