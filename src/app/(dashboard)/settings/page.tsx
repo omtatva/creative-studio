@@ -10,7 +10,7 @@ const SHORTCUTS = [
   { href: ROUTES.settingsWorkspace, label: "Workspace", description: "Name, slug, and company details", icon: Building2 },
   { href: ROUTES.settingsBranding, label: "Branding", description: "Logo, favicon, and brand color", icon: Palette },
   { href: ROUTES.settingsTheme, label: "Theme", description: "Colors, radius, and typography", icon: Sliders },
-  { href: ROUTES.settingsUsers, label: "Users", description: "Manage members and invites", icon: Users, superAdminOnly: true },
+  { href: ROUTES.settingsUsers, label: "Users", description: "Invite people to your workspace", icon: Users },
   { href: ROUTES.settingsAi, label: "AI Settings", description: "Generation preferences for AI Studio", icon: Sparkles },
   { href: ROUTES.settingsNotifications, label: "Notifications", description: "Email and push preferences", icon: Bell },
   { href: ROUTES.settingsSecurity, label: "Security", description: "2FA, sessions, and domains", icon: Lock },

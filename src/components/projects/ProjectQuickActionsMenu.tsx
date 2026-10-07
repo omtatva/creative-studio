@@ -14,6 +14,7 @@ import {
 import { cn } from "@/lib/utils/cn";
 import { Project } from "@/types/project.types";
 import { useDismissableMenu } from "@/hooks/useDismissableMenu";
+import { useFeatureAccess } from "@/hooks/useFeatureAccess";
 
 interface ProjectQuickActionsMenuProps {
   project: Project;
@@ -25,6 +26,8 @@ interface ProjectQuickActionsMenuProps {
   onDelete: () => void;
   onToggleFavorite: () => void;
   onTogglePinned: () => void;
+  /** "onCover": the trigger sits directly on the project banner gradient, so it uses light-on-blue instead of muted text. */
+  triggerStyle?: "default" | "onCover";
 }
 
 /**
@@ -42,8 +45,14 @@ export function ProjectQuickActionsMenu({
   onDelete,
   onToggleFavorite,
   onTogglePinned,
+  triggerStyle = "default",
 }: ProjectQuickActionsMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
+  // Feature Access matrix: hide what the rules/routes would refuse. Favorite/Pin are per-user and always shown.
+  const { can } = useFeatureAccess();
+  const canEdit = can("projects.edit");
+  const canDuplicate = can("projects.create");
+  const canArchiveOrDelete = can("projects.delete");
   const isFavorited = project.favoritedBy.includes(currentUid);
   const isPinned = project.pinnedBy.includes(currentUid);
   const ref = useDismissableMenu<HTMLDivElement>(isOpen, () => setIsOpen(false));
@@ -57,7 +66,7 @@ export function ProjectQuickActionsMenu({
     <div ref={ref} className="relative" onClick={stop}>
       <button
         onClick={() => setIsOpen((v) => !v)}
-        className="rounded-theme p-1.5 text-foreground-muted hover:bg-surface-muted"
+        className={cn("rounded-theme p-1.5", triggerStyle === "onCover" ? "bg-black/10 text-white hover:bg-black/20" : "text-foreground-muted hover:bg-surface-muted")}
         aria-label="Project actions"
       >
         <MoreHorizontal className="h-4 w-4" />
@@ -67,16 +76,17 @@ export function ProjectQuickActionsMenu({
         <div className="absolute right-0 z-20 mt-1 w-48 rounded-theme border border-border bg-surface p-1.5 shadow-soft-lg">
           <MenuItem icon={Star} label={isFavorited ? "Unfavorite" : "Favorite"} onClick={() => { onToggleFavorite(); setIsOpen(false); }} active={isFavorited} />
           <MenuItem icon={Pin} label={isPinned ? "Unpin" : "Pin"} onClick={() => { onTogglePinned(); setIsOpen(false); }} active={isPinned} />
-          <div className="my-1 h-px bg-border" />
-          <MenuItem icon={Pencil} label="Edit" onClick={() => { onEdit(); setIsOpen(false); }} />
-          <MenuItem icon={Copy} label="Duplicate" onClick={() => { onDuplicate(); setIsOpen(false); }} />
-          {project.isArchived ? (
-            <MenuItem icon={ArchiveRestore} label="Restore" onClick={() => { onRestore(); setIsOpen(false); }} />
-          ) : (
-            <MenuItem icon={Archive} label="Archive" onClick={() => { onArchive(); setIsOpen(false); }} />
-          )}
-          <div className="my-1 h-px bg-border" />
-          <MenuItem icon={Trash2} label="Delete" danger onClick={() => { onDelete(); setIsOpen(false); }} />
+          {(canEdit || canDuplicate || canArchiveOrDelete) && <div className="my-1 h-px bg-border" />}
+          {canEdit && <MenuItem icon={Pencil} label="Edit" onClick={() => { onEdit(); setIsOpen(false); }} />}
+          {canDuplicate && <MenuItem icon={Copy} label="Duplicate" onClick={() => { onDuplicate(); setIsOpen(false); }} />}
+          {canArchiveOrDelete &&
+            (project.isArchived ? (
+              <MenuItem icon={ArchiveRestore} label="Restore" onClick={() => { onRestore(); setIsOpen(false); }} />
+            ) : (
+              <MenuItem icon={Archive} label="Archive" onClick={() => { onArchive(); setIsOpen(false); }} />
+            ))}
+          {canArchiveOrDelete && <div className="my-1 h-px bg-border" />}
+          {canArchiveOrDelete && <MenuItem icon={Trash2} label="Delete" danger onClick={() => { onDelete(); setIsOpen(false); }} />}
         </div>
       )}
     </div>

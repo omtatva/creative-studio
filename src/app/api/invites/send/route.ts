@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifySuperAdminAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
+import { verifyRequestAuth, verifySuperAdminAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
 import { sendGmailMessage, GmailApiError } from "@/lib/server/gmailClient";
 import { enforceRateLimit, RateLimitExceededError } from "@/lib/server/rateLimit";
 
@@ -28,12 +28,15 @@ interface SendInviteEmailBody {
  * everything the client-side Firestore rules already enforce, using
  * firebase-admin (which bypasses those rules) rather than trusting
  * whatever the browser claims:
- *   1. The caller is the platform SUPER ADMIN (verifySuperAdminAuth —
- *      never a uid read from the request body). Inviting people into a
- *      workspace is workspace member administration, which is Super
- *      Admin only; a workspace owner/admin/employee gets 403. (This
- *      used to accept a workspace owner/admin and, as a side effect,
- *      rejected Super Admin, who isn't a member of customer workspaces.)
+ *   1. The caller is authenticated (verifyRequestAuth — never a uid
+ *      read from the request body) AND is either the platform SUPER
+ *      ADMIN (any invite) or an OWNER/ADMIN of the invite's own
+ *      workspace sending a MEMBER or VIEWER invite. The role is read
+ *      from the stored invite, not the request body, so an Owner can't
+ *      use this route to send an Admin invitation; an employee, or an
+ *      owner of some other workspace, gets 403. Project-wise
+ *      collaboration depends on this: the invitee joins as a plain
+ *      member and is then added to specific projects.
  *   2. The invite (looked up fresh from Firestore by inviteId, not
  *      trusted from the request body) exists and its recipient matches.
  *   3. The email address matches the invite's own record, so a
@@ -51,7 +54,7 @@ interface SendInviteEmailBody {
 export async function POST(request: NextRequest) {
   let uid: string;
   try {
-    ({ uid } = await verifySuperAdminAuth(request));
+    ({ uid } = await verifyRequestAuth(request));
   } catch (err) {
     const status = err instanceof AuthVerificationError ? err.status : 403;
     const message = err instanceof Error ? err.message : "Not authorized.";
@@ -88,9 +91,27 @@ export async function POST(request: NextRequest) {
   if (!inviteSnapshot.exists) {
     return NextResponse.json({ error: "This invitation no longer exists." }, { status: 404 });
   }
-  const invite = inviteSnapshot.data() as { workspaceId?: string; email?: string };
+  const invite = inviteSnapshot.data() as { workspaceId?: string; email?: string; role?: string };
   if (!invite.workspaceId || !invite.email) {
     return NextResponse.json({ error: "This invitation is missing required data." }, { status: 500 });
+  }
+
+  // Authorization (against the STORED invite, never the body): Super Admin, or this
+  // workspace's own Owner/Admin for a member/viewer invite.
+  let isSuperAdmin = false;
+  try {
+    await verifySuperAdminAuth(request);
+    isSuperAdmin = true;
+  } catch {
+    isSuperAdmin = false;
+  }
+  if (!isSuperAdmin) {
+    const memberSnap = await adminDb().collection("members").doc(`${invite.workspaceId}_${uid}`).get();
+    const callerRole = memberSnap.exists ? (memberSnap.data()?.role as string | undefined) : undefined;
+    const isWorkspaceAdmin = callerRole === "owner" || callerRole === "admin";
+    if (!isWorkspaceAdmin || !["member", "viewer"].includes(invite.role ?? "")) {
+      return NextResponse.json({ error: "Only the workspace owner or admin can send member invitations; admin invitations are handled by the platform administrator." }, { status: 403 });
+    }
   }
   if (invite.email.trim().toLowerCase() !== email.trim().toLowerCase()) {
     return NextResponse.json({ error: "The invitation's recipient doesn't match this request." }, { status: 400 });
@@ -99,7 +120,8 @@ export async function POST(request: NextRequest) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
   const inviteLink = `${appUrl.replace(/\/$/, "")}/invite/${inviteId}`;
   const expiresLabel = new Date(expiresAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
-  const roleLabel = role.charAt(0).toUpperCase() + role.slice(1);
+  const storedRole = invite.role ?? role;
+  const roleLabel = storedRole.charAt(0).toUpperCase() + storedRole.slice(1);
 
   try {
     await sendGmailMessage({

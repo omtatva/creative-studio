@@ -4,6 +4,7 @@ import { List, Table2, SlidersHorizontal, Plus, ArrowUpDown } from "lucide-react
 import { SearchBar } from "@/components/ui/SearchBar";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils/cn";
+import { useFeatureAccess } from "@/hooks/useFeatureAccess";
 import { TaskSort, TaskSortField, TaskViewMode } from "@/types/task.types";
 
 const SORT_OPTIONS: { field: TaskSortField; label: string }[] = [
@@ -35,6 +36,7 @@ export function TaskListToolbar({
   onOpenFilters,
   onCreateTask,
 }: TaskListToolbarProps) {
+  const { can } = useFeatureAccess();
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
       <SearchBar onSearch={onSearchChange} placeholder="Search by title, tag, or assignee..." />
@@ -80,10 +82,12 @@ export function TaskListToolbar({
           </button>
         </div>
 
-        <Button size="sm" onClick={onCreateTask}>
-          <Plus className="h-4 w-4" />
-          New Task
-        </Button>
+        {can("tasks.create") && (
+          <Button size="sm" onClick={onCreateTask}>
+            <Plus className="h-4 w-4" />
+            New Task
+          </Button>
+        )}
       </div>
     </div>
   );

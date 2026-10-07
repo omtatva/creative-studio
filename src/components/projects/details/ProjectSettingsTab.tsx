@@ -13,6 +13,7 @@ import { useProjectDetailsContext } from "@/contexts/ProjectDetailsContext";
 import { useProjectActions } from "@/hooks/useProjectActions";
 import { useToast } from "@/hooks/useToast";
 import { exportProjectAsJson } from "@/lib/utils/exportProject";
+import { OMTATVA_BLUE_RGB, projectAccentRgb } from "@/lib/constants/projectAppearance";
 
 /**
  * Inline (non-modal) settings form — same fields as ProjectFormModal
@@ -28,14 +29,15 @@ export function ProjectSettingsTab() {
 
   const [name, setName] = useState(project?.name ?? "");
   const [description, setDescription] = useState(project?.description ?? "");
-  const [color, setColor] = useState(project?.color ?? "");
+  // Shows the project's EFFECTIVE color (old default indigo reads as Omtatva blue), so the picker matches what the header shows.
+  const [color, setColor] = useState(project ? projectAccentRgb(project) : "");
   const [icon, setIcon] = useState(project?.icon ?? "");
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
 
   if (!project) return null;
 
-  const isDirty = name !== project.name || description !== project.description || color !== project.color || icon !== project.icon;
+  const isDirty = name !== project.name || description !== project.description || color !== projectAccentRgb(project) || icon !== project.icon;
 
   async function handleSave() {
     const result = await actions.update(project!.id, { name, description, color, icon });
@@ -66,7 +68,7 @@ export function ProjectSettingsTab() {
           <Textarea label="Description" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
           <div>
             <p className="mb-1.5 text-sm font-medium text-foreground">Color</p>
-            <ProjectColorPicker colors={options.colors} value={color} onChange={setColor} />
+            <ProjectColorPicker colors={[OMTATVA_BLUE_RGB, ...options.colors.filter((c) => c !== OMTATVA_BLUE_RGB)]} value={color} onChange={setColor} />
           </div>
           <div>
             <p className="mb-1.5 text-sm font-medium text-foreground">Icon</p>

@@ -43,7 +43,10 @@ const CHOOSABLE_PLANS = PLAN_ORDER.filter((p) => p !== "enterprise") as Exclude<
 export default function BillingPlanSettingsPage() {
   const router = useRouter();
   const { workspace, isLoading: isLoadingWorkspace } = useWorkspaceContext();
-  const { canManageWorkspace, isLoading: isLoadingRole } = useCurrentMemberRole();
+  const { canManageWorkspace, canAdministerWorkspace, isLoading: isLoadingRole } = useCurrentMemberRole();
+  // A platform Super Admin may VIEW any workspace's billing here, but plan/limits/subscription are
+  // changed through Super Admin > Customers/Billing (authoritative), never by filing a customer-side request.
+  const isSuperAdminView = canAdministerWorkspace && !canManageWorkspace;
   const toast = useToast();
   const [subscription, setSubscription] = useState<WorkspaceSubscription | null | undefined>(undefined);
 
@@ -78,7 +81,7 @@ export default function BillingPlanSettingsPage() {
 
   if (isLoadingWorkspace || isLoadingRole || !workspace) return <Loader label="Loading billing..." />;
 
-  if (!canManageWorkspace) {
+  if (!canAdministerWorkspace) {
     return (
       <div className="flex flex-col gap-2">
         <h1 className="text-xl font-semibold text-foreground">Billing & Plan</h1>
@@ -142,7 +145,7 @@ export default function BillingPlanSettingsPage() {
               </p>
             )}
           </div>
-          {request && !request.checkoutStarted ? (
+          {isSuperAdminView ? null : request && !request.checkoutStarted ? (
             <Button size="sm" onClick={() => router.push(`${ROUTES.billingUpgrade}?plan=${request.planId}`)}>
               Continue to Payment
             </Button>
@@ -156,6 +159,19 @@ export default function BillingPlanSettingsPage() {
 
       <PlanUsageSection workspace={workspace} subscription={subscription} />
 
+      {isSuperAdminView && (
+        <SettingsSection title="Plan, limits & subscription" description="Authoritative billing is managed by the platform, not from the customer's Billing page.">
+          <p className="text-sm text-foreground-muted">
+            You are viewing this workspace as Super Admin.{" "}
+            <Link href={`${ROUTES.superAdminCustomers}/${workspace.id}`} className="font-medium text-primary hover:underline">
+              Manage its plan, limits, entitlements and subscription in Super Admin → Customers
+            </Link>
+            .
+          </p>
+        </SettingsSection>
+      )}
+
+      {!isSuperAdminView && (
       <SettingsSection title="Change plan" description="Choose a plan — it activates once payment is confirmed, never immediately.">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           {CHOOSABLE_PLANS.map((planId) => {
@@ -198,6 +214,7 @@ export default function BillingPlanSettingsPage() {
           .
         </p>
       </SettingsSection>
+      )}
     </div>
   );
 }

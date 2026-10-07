@@ -32,6 +32,19 @@
  * and shared by both.
  */
 :root {
+  /* Project header design tokens — Super Admin > Platform Settings > Appearance.
+     --project-header-primary/secondary/gradient-direction are overwritten from
+     platform_settings/appearance by ProjectAppearanceApplier; the -default- set is
+     the shipped Omtatva blue baseline and is never overwritten. Platform-wide:
+     NOT derived from workspace branding. */
+  --project-header-primary: 61 111 168; /* #3D6FA8 */
+  --project-header-secondary: 102 168 224; /* #66A8E0 */
+  --project-header-light: 234 243 255; /* #EAF3FF */
+  --project-header-gradient-direction: 120deg;
+  --project-header-default-primary: 61 111 168;
+  --project-header-default-secondary: 102 168 224;
+  --project-header-default-direction: 120deg;
+
   --color-primary: 88 101 242; /* #5865F2 */
   --color-secondary: 139 92 246; /* Violet #8B5CF6 */
   --color-accent: 236 72 153; /* Pink #EC4899 — used sparingly, as an accent only */

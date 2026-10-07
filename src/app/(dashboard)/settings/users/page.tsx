@@ -6,7 +6,7 @@ import { SettingsSection } from "@/components/settings/SettingsSection";
 import { GmailConnectionSection } from "@/components/settings/GmailConnectionSection";
 import { InviteUserModal } from "@/components/settings/InviteUserModal";
 import { Button } from "@/components/ui/Button";
-import { SuperAdminOnly } from "@/components/auth/SuperAdminOnly";
+import { WorkspaceAdminOnly } from "@/components/auth/WorkspaceAdminOnly";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
@@ -39,7 +39,11 @@ function UsersSettingsPageContent() {
   const { invites, isLoading: isLoadingInvites, error: invitesError } = useInvites();
   const { firebaseUser, profile } = useAuthContext();
   const { workspace, workspaceId } = useWorkspaceContext();
-  const { canManageMembers } = useCurrentMemberRole();
+  // canManageMembers = platform Super Admin (change roles, disable, remove). canInvite = the
+  // workspace's own Owner/Admin too, limited to Member/Viewer invites (rules + /api/invites/send).
+  const { canManageMembers, canManageWorkspace } = useCurrentMemberRole();
+  const canInvite = canManageWorkspace || canManageMembers;
+  const canActOnInvite = (invite: WorkspaceInvite) => canManageMembers || (canInvite && invite.role !== "admin");
   const toast = useToast();
 
   const [isInviteOpen, setIsInviteOpen] = useState(false);
@@ -62,8 +66,12 @@ function UsersSettingsPageContent() {
       toast.error("No active workspace selected.");
       return;
     }
-    if (!canManageMembers) {
-      toast.error("Only the platform administrator can invite members.");
+    if (!canInvite) {
+      toast.error("Only the workspace owner or an admin can invite people.");
+      return;
+    }
+    if (values.role === "admin" && !canManageMembers) {
+      toast.error("Admin invitations are handled by the platform administrator.");
       return;
     }
     const normalizedEmail = values.email.trim().toLowerCase();
@@ -184,9 +192,11 @@ function UsersSettingsPageContent() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-foreground">Users</h1>
-          <p className="mt-1 text-sm text-foreground-muted">Invite teammates, manage roles, and disable access.</p>
+          <p className="mt-1 text-sm text-foreground-muted">
+            {canManageMembers ? "Invite teammates, manage roles, and disable access." : "Invite people to your workspace, then add them to the specific projects they should work on from each project's Members tab."}
+          </p>
         </div>
-        {canManageMembers && (
+        {canInvite && (
           <Button size="sm" onClick={() => setIsInviteOpen(true)}>
             <UserPlus className="h-4 w-4" />
             Invite user
@@ -216,7 +226,7 @@ function UsersSettingsPageContent() {
                       </p>
                     </div>
                     <Badge variant="warning">Pending</Badge>
-                    {canManageMembers && (
+                    {canActOnInvite(invite) && (
                       <>
                         <button
                           onClick={() => handleCopyInviteLink(invite.id)}
@@ -268,19 +278,23 @@ function UsersSettingsPageContent() {
 
                 {member.status === "suspended" && <Badge variant="danger">Disabled</Badge>}
 
-                <select
-                  value={member.role}
-                  onChange={(e) => handleRoleChange(member, e.target.value as MemberRole)}
-                  disabled={member.role === "owner" || busyUid === member.userId}
-                  className="h-8 rounded-theme border border-border bg-surface px-2 text-xs capitalize text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50"
-                >
-                  <option value="owner" disabled>Owner</option>
-                  <option value="admin">Admin</option>
-                  <option value="member">Member</option>
-                  <option value="viewer">Viewer</option>
-                </select>
+                {canManageMembers ? (
+                  <select
+                    value={member.role}
+                    onChange={(e) => handleRoleChange(member, e.target.value as MemberRole)}
+                    disabled={member.role === "owner" || busyUid === member.userId}
+                    className="h-8 rounded-theme border border-border bg-surface px-2 text-xs capitalize text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50"
+                  >
+                    <option value="owner" disabled>Owner</option>
+                    <option value="admin">Admin</option>
+                    <option value="member">Member</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
+                ) : (
+                  <Badge variant={ROLE_VARIANT[member.role]} className="capitalize">{member.role}</Badge>
+                )}
 
-                {member.role !== "owner" && (
+                {canManageMembers && member.role !== "owner" && (
                   <>
                     <ToggleSwitch
                       checked={member.status !== "suspended"}
@@ -298,7 +312,7 @@ function UsersSettingsPageContent() {
         )}
       </SettingsSection>
 
-      <InviteUserModal isOpen={isInviteOpen} onClose={() => setIsInviteOpen(false)} onInvite={handleInvite} isSubmitting={isInviting} />
+      <InviteUserModal isOpen={isInviteOpen} onClose={() => setIsInviteOpen(false)} onInvite={handleInvite} isSubmitting={isInviting} allowAdminRole={canManageMembers} />
 
       <ConfirmModal
         isOpen={Boolean(removeTarget)}
@@ -313,11 +327,15 @@ function UsersSettingsPageContent() {
   );
 }
 
-/** Workspace member & access administration is platform Super Admin only — see SuperAdminOnly. */
+/**
+ * Owner/Admin can INVITE people (Member/Viewer) so they can be added to specific
+ * projects; changing roles, disabling and removing members stay Super Admin only —
+ * those controls render only for the Super Admin (see canManageMembers above).
+ */
 export default function UsersSettingsPage() {
   return (
-    <SuperAdminOnly title="Users">
+    <WorkspaceAdminOnly title="Users">
       <UsersSettingsPageContent />
-    </SuperAdminOnly>
+    </WorkspaceAdminOnly>
   );
 }

@@ -109,6 +109,7 @@ function renderPaymentOutcomeEmail(
               ${row("Subscription ID", params.subscriptionId ?? "—")}
             </table>
           </td></tr>
+          <tr><td style="padding:0 32px 32px 32px;"><a href="${escapeHtml(superAdminUrl("/super-admin/billing"))}" style="display:inline-block;padding:10px 16px;border-radius:8px;background-color:#3D6FA8;color:#ffffff;font-size:13px;font-weight:600;text-decoration:none;">Open Billing</a></td></tr>
         </table>
       </td></tr>
     </table>
@@ -144,11 +145,17 @@ function renderPurchaseRequestEmail(
               ${row("Payment status", "Pending — no payment provider connected yet")}
             </table>
           </td></tr>
+          <tr><td style="padding:0 32px 32px 32px;"><a href="${escapeHtml(superAdminUrl("/super-admin/billing"))}" style="display:inline-block;padding:10px 16px;border-radius:8px;background-color:#3D6FA8;color:#ffffff;font-size:13px;font-weight:600;text-decoration:none;">Open Purchase Requests</a></td></tr>
         </table>
       </td></tr>
     </table>
   </body>
 </html>`;
+}
+
+/** Where the Super Admin pages live — same env the invite emails use. The destination is still behind Super Admin sign-in. */
+function superAdminUrl(path: string): string {
+  return `${(process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/$/, "")}${path}`;
 }
 
 function escapeHtml(value: string): string {

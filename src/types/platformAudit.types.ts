@@ -28,6 +28,7 @@ export type PlatformAuditAction =
   // `manual_plan_activation` instead (a complimentary/manual
   // activation, explicitly NOT a payment). Both stay in the union so
   // historical log rows still render.
+  | "feature_access_updated"
   | "member_administered"
   | "manual_plan_activation"
   | "plan_activated"

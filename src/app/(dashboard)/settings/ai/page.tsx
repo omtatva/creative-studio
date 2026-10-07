@@ -39,7 +39,8 @@ const SUPPORTED_PROVIDERS: { id: AIProvider; label: string; requiresKey: boolean
 export default function AISettingsPage() {
   const { settings, isLoading, isSaving, save } = useWorkspaceSettings();
   const { workspace, workspaceId } = useWorkspaceContext();
-  const { canManageWorkspace } = useCurrentMemberRole();
+  // Owner/Admin OR the platform Super Admin (the AI key routes and ai_config rules accept Super Admin too).
+  const { canAdministerWorkspace: canManageWorkspace } = useCurrentMemberRole();
   const toast = useToast();
   const [draft, setDraft] = useState<AISettings>(DEFAULT_AI_SETTINGS);
 

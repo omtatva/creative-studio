@@ -18,6 +18,7 @@ import { projectsCol, projectDoc, projectMembersCol, projectMemberDoc } from "@/
 import { deleteFile, projectCoverRef, uploadFile } from "@/lib/firebase/storage";
 import { logActivity } from "@/services/activityService";
 import { getOrCreateDefaultStage } from "@/services/stageService";
+import { notifyEvent } from "@/services/notificationService";
 import {
   CreateProjectPayload,
   Project,
@@ -355,6 +356,8 @@ export async function addProjectMember(workspaceId: string, projectId: string, m
   // data only; the new member still couldn't see the project at all
   // under the membership-filtered visibility model.
   await upsertProjectMembership({ projectId, workspaceId, uid: member.uid, role: member.role, addedBy });
+  // In-app notification for the person who just gained access (opens this project). Best-effort.
+  await notifyEvent({ type: "project_member_added", workspaceId, projectId, uid: member.uid });
 }
 
 export async function removeProjectMember(workspaceId: string, projectId: string, member: ProjectMember): Promise<void> {

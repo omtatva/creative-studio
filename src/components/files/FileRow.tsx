@@ -10,6 +10,7 @@ import { ProjectFile } from "@/types/file.types";
 import { formatBytes } from "@/lib/utils/fileFormat";
 import { formatDate } from "@/lib/utils/date";
 import { fileReviewRoute, projectRoute } from "@/lib/constants/routes";
+import { DownloadButton } from "@/components/files/DownloadButton";
 
 interface FileRowProps {
   file: ProjectFile;
@@ -66,9 +67,9 @@ export function FileRow({ file, previousVersions = [], showProjectLink, onDelete
 
         <Avatar name={file.uploadedBy.displayName} src={file.uploadedBy.photoURL} size="sm" />
 
-        <a href={file.url} download={file.fileName} className="rounded-theme p-1.5 text-foreground-muted hover:bg-surface-muted" aria-label="Download">
+        <DownloadButton target={{ kind: "file", workspaceId: file.workspaceId, fileId: file.id }} className="rounded-theme p-1.5 text-foreground-muted hover:bg-surface-muted" ariaLabel="Download">
           <Download className="h-4 w-4" />
-        </a>
+        </DownloadButton>
 
         {onDelete && (
           <button onClick={() => onDelete(file)} className="rounded-theme p-1.5 text-foreground-muted hover:bg-error/10 hover:text-error" aria-label="Delete file">
@@ -86,9 +87,9 @@ export function FileRow({ file, previousVersions = [], showProjectLink, onDelete
               </span>
               <div className="flex items-center gap-2">
                 <AssetStatusBadge status={v.reviewStatus} />
-                <a href={v.url} download={v.fileName} className="text-primary hover:underline">
+                <DownloadButton target={{ kind: "file", workspaceId: v.workspaceId, fileId: v.id }} className="text-primary hover:underline" ariaLabel={`Download v${v.versionNumber}`}>
                   Download
-                </a>
+                </DownloadButton>
               </div>
             </div>
           ))}

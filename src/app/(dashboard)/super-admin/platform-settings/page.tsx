@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/Input";
 import { Loader } from "@/components/ui/Loader";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { useToast } from "@/hooks/useToast";
+import { ProjectAppearanceSection } from "@/components/superAdmin/ProjectAppearanceSection";
 import { getPlatformSettings, updatePlatformSettings, getPlatformIntegrationStatus } from "@/services/platformSettingsService";
 import { getGmailConnectionStatus } from "@/services/gmailConnectionService";
 import { SUPER_ADMIN_EMAIL } from "@/lib/constants/itSupport";
@@ -171,6 +172,8 @@ export default function SuperAdminPlatformSettingsPage() {
           </div>
         </div>
       </SettingsSection>
+
+      <ProjectAppearanceSection />
 
       <SettingsSection title="Security" description="Real status — no destructive toggles live here.">
         {!status ? (

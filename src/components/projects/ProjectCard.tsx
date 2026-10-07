@@ -1,6 +1,5 @@
 "use client";
 
-import type { CSSProperties } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Calendar, CheckSquare, MessageSquareText, Paperclip, Pin, Star } from "lucide-react";
@@ -16,23 +15,8 @@ import { ProjectMetrics } from "@/hooks/useProjectMetrics";
 import { projectRoute } from "@/lib/constants/routes";
 import { formatDueDate, timeAgo } from "@/lib/utils/date";
 import { cn } from "@/lib/utils/cn";
-
-/**
- * Fixed abstract cover for projects with no explicit coverImageUrl —
- * deliberately NOT keyed to the project's own accent color (that
- * used to make some cards render as a wall of whatever hue a project
- * happened to use, e.g. solid red). Same subtle indigo/violet
- * geometric treatment on every card, matching the app shell's navy
- * identity instead of each project's individual color.
- */
-const PLACEHOLDER_COVER_STYLE: CSSProperties = {
-  backgroundColor: "rgb(var(--color-cards))",
-  backgroundImage: [
-    "radial-gradient(circle at 18% 22%, rgb(99 102 241 / 0.16), transparent 42%)",
-    "radial-gradient(circle at 82% 68%, rgb(139 92 246 / 0.14), transparent 48%)",
-    "linear-gradient(135deg, transparent 0%, rgb(255 255 255 / 0.02) 50%, transparent 100%)",
-  ].join(", "),
-};
+import { usePlatformAppearance } from "@/hooks/usePlatformAppearance";
+import { projectAccentRgb, projectHeaderBackground } from "@/lib/constants/projectAppearance";
 
 interface ProjectCardProps {
   project: Project;
@@ -54,9 +38,9 @@ interface ProjectCardProps {
  * coverImageUrl (set via the project form) only — never an
  * automatically-picked uploaded asset, which previously made some
  * cards render as a wall of whatever color/image a random file
- * happened to be. No cover set → a fixed, subtle indigo/violet
- * abstract pattern (PLACEHOLDER_COVER_STYLE), the same on every
- * card regardless of the project's own accent color. File/task/
+ * happened to be. No cover set → the same Omtatva blue project-header
+ * gradient the project page uses (projectHeaderBackground — token-based, a
+ * project's own deliberately chosen color wins). File/task/
  * review counts are real aggregates from useProjectMetrics, not
  * fabricated numbers.
  */
@@ -75,6 +59,7 @@ export function ProjectCard({
   onTogglePinned,
 }: ProjectCardProps) {
   const Icon = getProjectIcon(project.icon);
+  const { appearance } = usePlatformAppearance();
   const isPinned = project.pinnedBy.includes(currentUid);
   const isFavorited = project.favoritedBy.includes(currentUid);
 
@@ -99,7 +84,7 @@ export function ProjectCard({
                 style={{ backgroundImage: `url(${project.coverImageUrl})` }}
               />
             ) : (
-              <div className="absolute inset-0 flex items-center justify-center transition-transform duration-300 group-hover:scale-105" style={PLACEHOLDER_COVER_STYLE}>
+              <div className="absolute inset-0 flex items-center justify-center transition-transform duration-300 group-hover:scale-105" style={{ background: projectHeaderBackground(project, appearance) }}>
                 <Icon className="h-10 w-10 text-foreground-muted/25" />
               </div>
             )}
@@ -107,7 +92,7 @@ export function ProjectCard({
             <div className="absolute inset-0 bg-gradient-to-t from-black/35 via-transparent to-transparent" />
 
             <div className="absolute left-3 top-3 flex h-8 w-8 items-center justify-center rounded-theme bg-cards/90 text-foreground shadow-soft backdrop-blur-glass">
-              <Icon className="h-4 w-4" style={{ color: `rgb(${project.color})` }} />
+              <Icon className="h-4 w-4" style={{ color: `rgb(${projectAccentRgb(project)})` }} />
             </div>
 
             <div className="absolute right-3 top-3 flex items-center gap-1.5" onClick={stop}>
@@ -153,7 +138,7 @@ export function ProjectCard({
             <div className="mb-3 h-1.5 w-full overflow-hidden rounded-full bg-surface-muted">
               <div
                 className="h-full rounded-full transition-all"
-                style={{ width: `${project.progress}%`, backgroundColor: `rgb(${project.color})` }}
+                style={{ width: `${project.progress}%`, backgroundColor: `rgb(${projectAccentRgb(project)})` }}
               />
             </div>
 

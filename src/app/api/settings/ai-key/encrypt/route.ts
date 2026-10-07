@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyRequestAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
+import { verifyRequestAuth, verifySuperAdminAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
 import { encryptSecret } from "@/lib/server/secretCrypto";
 
 export const runtime = "nodejs";
@@ -51,8 +51,12 @@ export async function POST(request: NextRequest) {
   }
   const memberSnap = await adminDb().collection("members").doc(`${workspaceId}_${uid}`).get();
   const role = memberSnap.exists ? (memberSnap.data()?.role as string | undefined) : undefined;
+  // Owner/Admin of this workspace, or the platform Super Admin administering it (no membership needed).
   if (!role || !["owner", "admin"].includes(role)) {
-    return NextResponse.json({ error: "Only workspace owners and admins can configure AI provider keys." }, { status: 403 });
+    const isSuperAdmin = await verifySuperAdminAuth(request).then(() => true).catch(() => false);
+    if (!isSuperAdmin) {
+      return NextResponse.json({ error: "Only workspace owners and admins can configure AI provider keys." }, { status: 403 });
+    }
   }
 
   const apiKey = body.apiKey?.trim();

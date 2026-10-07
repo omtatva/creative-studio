@@ -25,6 +25,7 @@ export const DEFAULT_PROJECT_OPTIONS: ProjectOptionsSettings = {
     { id: "urgent", label: "Urgent", color: "244 63 94", order: 3 },
   ],
   colors: [
+    "61 111 168", // Omtatva blue — the default for new projects
     "99 102 241",
     "20 184 166",
     "244 63 94",

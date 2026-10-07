@@ -6,6 +6,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { formatDate, isOverdue } from "@/lib/utils/date";
 import { useProjectDetailsContext } from "@/contexts/ProjectDetailsContext";
+import { projectAccentRgb } from "@/lib/constants/projectAppearance";
 
 /**
  * Overview tab: progress/completion, task summary, recent files,
@@ -34,7 +35,7 @@ export function ProjectOverviewTab() {
                   cy="40"
                   r="34"
                   fill="none"
-                  stroke={`rgb(${project.color})`}
+                  stroke={`rgb(${projectAccentRgb(project)})`}
                   strokeWidth="8"
                   strokeDasharray={2 * Math.PI * 34}
                   strokeDashoffset={2 * Math.PI * 34 * (1 - project.progress / 100)}

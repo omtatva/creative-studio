@@ -13,6 +13,7 @@ import { ProjectStatusOption, ProjectPriorityOption } from "@/types/settings.typ
 import { ProjectMetrics } from "@/hooks/useProjectMetrics";
 import { projectRoute } from "@/lib/constants/routes";
 import { formatDueDate } from "@/lib/utils/date";
+import { projectAccentRgb } from "@/lib/constants/projectAppearance";
 
 interface ProjectListRowProps {
   project: Project;
@@ -42,9 +43,9 @@ export function ProjectListRow(props: ProjectListRowProps) {
         <div className="flex min-w-0 items-center gap-3">
           <div
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-theme"
-            style={{ backgroundColor: `rgb(${project.color} / 0.12)` }}
+            style={{ backgroundColor: `rgb(${projectAccentRgb(project)} / 0.12)` }}
           >
-            <Icon className="h-4.5 w-4.5" style={{ color: `rgb(${project.color})` }} />
+            <Icon className="h-4.5 w-4.5" style={{ color: `rgb(${projectAccentRgb(project)})` }} />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
@@ -69,7 +70,7 @@ export function ProjectListRow(props: ProjectListRowProps) {
 
         <div className="hidden w-24 items-center gap-2 md:flex">
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-muted">
-            <div className="h-full rounded-full" style={{ width: `${project.progress}%`, backgroundColor: `rgb(${project.color})` }} />
+            <div className="h-full rounded-full" style={{ width: `${project.progress}%`, backgroundColor: `rgb(${projectAccentRgb(project)})` }} />
           </div>
           <span className="shrink-0 text-xs text-foreground-muted">{project.progress}%</span>
         </div>

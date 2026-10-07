@@ -13,6 +13,7 @@ import { ProjectCoverUpload } from "./ProjectCoverUpload";
 import { TagsInput } from "./TagsInput";
 import { projectFormSchema, type ProjectFormValues } from "@/lib/validations/project.schema";
 import { useProjectOptions } from "@/hooks/useProjectOptions";
+import { OMTATVA_BLUE_RGB } from "@/lib/constants/projectAppearance";
 import { Project } from "@/types/project.types";
 
 interface ProjectFormModalProps {
@@ -46,7 +47,7 @@ export function ProjectFormModal({ isOpen, onClose, project, onSubmit, isSubmitt
     defaultValues: {
       name: "",
       description: "",
-      color: options.colors[0],
+      color: OMTATVA_BLUE_RGB,
       icon: options.icons[0],
       statusId: options.statuses[0]?.id ?? "",
       priorityId: options.priorities[0]?.id ?? "",
@@ -61,7 +62,7 @@ export function ProjectFormModal({ isOpen, onClose, project, onSubmit, isSubmitt
     reset({
       name: project?.name ?? "",
       description: project?.description ?? "",
-      color: project?.color ?? options.colors[0],
+      color: project?.color ?? OMTATVA_BLUE_RGB,
       icon: project?.icon ?? options.icons[0],
       statusId: project?.statusId ?? options.statuses[0]?.id ?? "",
       priorityId: project?.priorityId ?? options.priorities[0]?.id ?? "",
@@ -99,7 +100,7 @@ export function ProjectFormModal({ isOpen, onClose, project, onSubmit, isSubmitt
             <Controller
               control={control}
               name="color"
-              render={({ field }) => <ProjectColorPicker colors={options.colors} value={field.value} onChange={field.onChange} />}
+              render={({ field }) => <ProjectColorPicker colors={[OMTATVA_BLUE_RGB, ...options.colors.filter((c) => c !== OMTATVA_BLUE_RGB)]} value={field.value} onChange={field.onChange} />}
             />
           </div>
 

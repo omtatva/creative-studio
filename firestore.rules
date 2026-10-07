@@ -135,6 +135,35 @@ service cloud.firestore {
         || isProjectAdmin(projectId);
     }
 
+    // FEATURE ACCESS MATRIX (Super Admin > Feature Access, stored in
+    // platform_settings/featureAccess — server-write-only, see that
+    // match block). A feature grant is NECESSARY but never SUFFICIENT:
+    // every caller below ANDs it onto canWriteProject/canManageProject,
+    // so it can only ever RESTRICT what workspace + project membership
+    // already allow. Deny happens ONLY on an explicit `false`:
+    //   - no featureAccess doc, or a key never saved   -> allowed
+    //   - Super Admin, workspace owner                  -> allowed
+    //   - admin -> the admin column; everyone else (member, viewer, or a
+    //     project-only collaborator with no workspace member doc) -> the
+    //     member ("Employee") column — matching resolveFeatureGrant in
+    //     lib/constants/featurePermissions.ts.
+    // INVARIANT: every configurable permission defaults to TRUE there;
+    // if one is ever defaulted false, this `true` fallback must change.
+    // Keep this clause LAST in && chains (cheapest checks first) — it
+    // costs up to 3 extra document accesses of the 10-per-request cap.
+    function featureAllowed(workspaceId, permId) {
+      return isSuperAdmin()
+        || !exists(/databases/$(database)/documents/platform_settings/featureAccess)
+        || featureGranted(workspaceId, permId);
+    }
+
+    function featureGranted(workspaceId, permId) {
+      let role = isWorkspaceMember(workspaceId) ? memberRole(workspaceId) : 'member';
+      let column = role == 'admin' ? 'admin' : 'member';
+      let grants = get(/databases/$(database)/documents/platform_settings/featureAccess).data.get('grants', {});
+      return role == 'owner' || grants.get(permId, {}).get(column, true) != false;
+    }
+
     // Google-Sheets-style link sharing for ONE file at a time (see
     // FileShareSettings in types/file.types.ts) — deliberately separate
     // from canAccessProject/canWriteProject above: a shared file grants
@@ -292,7 +321,11 @@ service cloud.firestore {
       // they could forge their own plan badge, usage display, and the
       // plan counts Super Admin sees. Every other field (name, logo,
       // timezone, ...) stays editable by owner/admin as before.
-      allow update: if isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin'])
+      // Super Admin may edit a customer's workspace profile (name/slug/company) the same way an
+      // Owner/Admin can — with the IDENTICAL locks below (counters, plan, limits, subscription cache and
+      // ownerId stay Admin-SDK-only even for Super Admin; authoritative billing/limit changes go through
+      // the Super Admin billing routes, never a client write).
+      allow update: if (isWorkspaceMemberWithRole(workspaceId, ['owner', 'admin']) || isSuperAdmin())
         && request.resource.data.get('projectCount', null) == resource.data.get('projectCount', null)
         && request.resource.data.get('memberCount', null) == resource.data.get('memberCount', null)
         && request.resource.data.get('storageBytesUsed', null) == resource.data.get('storageBytesUsed', null)
@@ -310,13 +343,27 @@ service cloud.firestore {
       allow delete: if isWorkspaceOwner(workspaceId) || isSuperAdmin();
 
       match /activity_logs/{logId} {
-        allow read: if isWorkspaceMember(workspaceId);
+        allow read: if isWorkspaceMember(workspaceId) || isSuperAdmin();
         allow create: if isWorkspaceMember(workspaceId);
         allow update, delete: if false;
       }
 
+      // NOTIFICATIONS. A user reads only their OWN feed, and only while still a
+      // member of this workspace (a removed member loses the feed with the
+      // workspace). CREATE is server-only (POST /api/notifications/notify via
+      // the Admin SDK): this used to be `write: isSelf(uid)`, which meant a
+      // notification addressed to ANYONE ELSE (task assignment, review
+      // decision) was always refused, and let a user write arbitrary
+      // notification text into their own feed. The only client mutation left
+      // is marking one of your own items read — nothing else on the document
+      // may change — plus dismissing your own item.
       match /notifications/{uid}/items/{itemId} {
-        allow read, write: if isSelf(uid);
+        allow read: if isSelf(uid) && isWorkspaceMember(workspaceId);
+        allow create: if false;
+        allow update: if isSelf(uid)
+          && isWorkspaceMember(workspaceId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+        allow delete: if isSelf(uid);
       }
 
       // See WorkspaceSubscription's doc comment in billing.types.ts —
@@ -563,10 +610,25 @@ service cloud.firestore {
       // the same threat class as creation, for the same reason.
       // Archiving (false->true) and every other field update are
       // unaffected.
+      //
+      // Feature Access matrix (clause LAST): archive/unarchive fields
+      // -> projects.delete; any other real edit -> projects.edit.
+      // Carve-outs that need NO feature grant because they aren't
+      // "editing the project": per-user favourite/pin flags, the
+      // project-member display array (project-role-gated administration),
+      // and updatedAt. A coverImageUrl-only write is the cover upload
+      // that follows project creation, so create OR edit suffices.
       allow update: if canManageProject(resource.data.workspaceId, projectId)
         && request.resource.data.workspaceId == resource.data.workspaceId
-        && !(resource.data.isArchived == true && request.resource.data.isArchived == false);
-      allow delete: if canManageProject(resource.data.workspaceId, projectId);
+        && !(resource.data.isArchived == true && request.resource.data.isArchived == false)
+        && (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['favoritedBy', 'pinnedBy', 'members', 'updatedAt'])
+            || (request.resource.data.diff(resource.data).affectedKeys().hasAny(['isArchived', 'archivedAt'])
+                ? featureAllowed(resource.data.workspaceId, 'projects.delete')
+                : (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['coverImageUrl', 'updatedAt'])
+                    ? (featureAllowed(resource.data.workspaceId, 'projects.create') || featureAllowed(resource.data.workspaceId, 'projects.edit'))
+                    : featureAllowed(resource.data.workspaceId, 'projects.edit'))));
+      allow delete: if canManageProject(resource.data.workspaceId, projectId)
+        && featureAllowed(resource.data.workspaceId, 'projects.delete');
     }
 
     // Real, queryable project-level access-control records — see
@@ -690,11 +752,18 @@ service cloud.firestore {
       // value goes through POST /api/tasks/description (server-side
       // sanitized — see lib/utils/htmlSanitizer.ts) as a follow-up
       // write, which is Admin-SDK and bypasses this rule entirely.
+      // Feature Access matrix (clause LAST): tasks.create / tasks.edit.
+      // An update touching ONLY denormalized counters/progress that the
+      // client bumps as a side effect of comments, attachments and
+      // subtasks is bookkeeping, not an edit, so it needs no tasks.edit.
       allow create: if canWriteProject(request.resource.data.workspaceId, request.resource.data.projectId)
-        && request.resource.data.descriptionHtml == '';
+        && request.resource.data.descriptionHtml == ''
+        && featureAllowed(request.resource.data.workspaceId, 'tasks.create');
       allow update: if canWriteProject(resource.data.workspaceId, resource.data.projectId)
         && request.resource.data.workspaceId == resource.data.workspaceId
-        && request.resource.data.descriptionHtml == resource.data.descriptionHtml;
+        && request.resource.data.descriptionHtml == resource.data.descriptionHtml
+        && (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['commentCount', 'attachmentCount', 'subtaskCount', 'completedSubtaskCount', 'progress', 'updatedAt'])
+            || featureAllowed(resource.data.workspaceId, 'tasks.edit'));
       allow delete: if canWriteProject(resource.data.workspaceId, resource.data.projectId);
 
       function isParentTaskMember() {
@@ -877,47 +946,62 @@ service cloud.firestore {
     // this isn't nested under a projects/{id} doc).
     match /stages/{stageId} {
       allow read: if canAccessProject(resource.data.workspaceId, resource.data.projectId);
-      allow create: if canWriteProject(request.resource.data.workspaceId, request.resource.data.projectId);
+      //
+      // Feature Access matrix (clause LAST): stages.create / .edit /
+      // .delete. Two carve-outs keep UPLOADS working when stage
+      // management is denied: the default "General" stage that the
+      // upload flow auto-creates (permitted under files.upload), and a
+      // fileIds-only write (the file<->stage link bookkeeping; the file
+      // record itself is gated by /api/files/finalize).
+      allow create: if canWriteProject(request.resource.data.workspaceId, request.resource.data.projectId)
+        && (featureAllowed(request.resource.data.workspaceId, 'stages.create')
+            || (request.resource.data.name == 'General' && featureAllowed(request.resource.data.workspaceId, 'files.upload')));
       allow update: if canWriteProject(resource.data.workspaceId, resource.data.projectId)
-        && request.resource.data.workspaceId == resource.data.workspaceId;
-      allow delete: if canWriteProject(resource.data.workspaceId, resource.data.projectId);
+        && request.resource.data.workspaceId == resource.data.workspaceId
+        && (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fileIds', 'updatedAt'])
+            || (request.resource.data.diff(resource.data).affectedKeys().hasAny(['isArchived'])
+                ? featureAllowed(resource.data.workspaceId, 'stages.delete')
+                : featureAllowed(resource.data.workspaceId, 'stages.edit')));
+      allow delete: if canWriteProject(resource.data.workspaceId, resource.data.projectId)
+        && featureAllowed(resource.data.workspaceId, 'stages.delete');
     }
 
-    // Only owner/admin may create, update (resend/cancel), or delete
-    // invites — this used to allow ANY member, which let a plain
-    // member invite people or cancel/rewrite someone else's invite.
-    // An invitee who isn't a workspace member yet can still read and
-    // accept only the specific invite(s) addressed to their own
-    // verified auth email (see the read/update OR-clauses below) —
-    // that's how a brand-new user goes from "holds an invite link" to
-    // "is a real member" without ever needing broader access.
+    // WORKSPACE INVITES — who may bring a NEW person into a workspace.
+    //   - Super Admin: any invite (admin / member / viewer), any workspace.
+    //   - The workspace's own Owner/Admin: invite as MEMBER or VIEWER only,
+    //     in their own workspace, as themselves (invitedBy == their uid).
+    //     That is the first half of project-wise collaboration: the invitee
+    //     becomes a plain workspace member with access to NO project, and
+    //     the Owner then adds them to specific projects through the Project
+    //     Members tab (project_members rules below, unchanged). It never
+    //     lets an Owner mint an Admin (workspace-wide project access) or
+    //     change anyone's existing role — role changes, disabling and
+    //     removing members stay Super Admin only (see the members block).
+    // An invitee who isn't a member yet can still read and accept only the
+    // invite(s) addressed to their own verified auth email.
     match /workspace_invites/{inviteId} {
-      // isSuperAdmin() added throughout so Super Admin > Users can
-      // invite someone into a customer's workspace for support
-      // purposes (Section "CUSTOMER SUPPORT" in the two-level admin
-      // model) — same non-forgeable check as everywhere else, not a
-      // new capability class.
       allow read: if isWorkspaceMember(resource.data.workspaceId)
         || isSuperAdmin()
         || (isSignedIn() && resource.data.email == request.auth.token.email);
 
-      // role is restricted to non-owner so an inviter can never grant
-      // Owner (or anything else) via an invite; workspaceId is
-      // re-checked against the caller's OWN membership so an
-      // owner/admin of workspace A can never create an invite that
-      // claims to belong to workspace B.
-      // SECURITY (member-administration lock): inviting people into a
-      // workspace is member administration — Super Admin only, no
-      // longer the workspace owner/admin. (Role is still restricted to
-      // non-owner so an invite can never grant Owner.)
-      allow create: if isSuperAdmin()
-        && request.resource.data.role in ['admin', 'member', 'viewer'];
+      allow create: if (isSuperAdmin() && request.resource.data.role in ['admin', 'member', 'viewer'])
+        || (isWorkspaceMemberWithRole(request.resource.data.workspaceId, ['owner', 'admin'])
+            && request.resource.data.role in ['member', 'viewer']
+            && request.resource.data.invitedBy == request.auth.uid
+            && request.resource.data.status == 'pending');
 
-      // Either an owner/admin managing the invite (resend/cancel), or
-      // the invitee themselves accepting it — which may ONLY flip
-      // status pending -> accepted and can never change which
-      // workspace/email/role the invite actually grants.
+      // Owner/Admin may resend (extend) or cancel a pending member/viewer
+      // invite in their own workspace — and nothing else about it: the
+      // role, email and workspace are frozen, so an invite can never be
+      // edited up into an Admin invite.
       allow update: if isSuperAdmin()
+        || (isWorkspaceMemberWithRole(resource.data.workspaceId, ['owner', 'admin'])
+            && resource.data.role in ['member', 'viewer']
+            && resource.data.status == 'pending'
+            && request.resource.data.status in ['pending', 'cancelled']
+            && request.resource.data.role == resource.data.role
+            && request.resource.data.email == resource.data.email
+            && request.resource.data.workspaceId == resource.data.workspaceId)
         || (isSignedIn()
           && resource.data.email == request.auth.token.email
           && resource.data.status == 'pending'
@@ -935,7 +1019,7 @@ service cloud.firestore {
     // grant themselves or anyone else elevated permissions by editing
     // a role's permissions array directly.
     match /workspace_roles/{roleId} {
-      allow read: if isWorkspaceMember(resource.data.workspaceId);
+      allow read: if isWorkspaceMember(resource.data.workspaceId) || isSuperAdmin();
       // SECURITY (member-administration lock): defining roles and what
       // each grants is member/access administration — Super Admin only,
       // no longer the workspace owner/admin. Read stays open to
@@ -950,7 +1034,7 @@ service cloud.firestore {
     // (actions they themselves take), but nothing can be edited or
     // deleted once written.
     match /audit_logs/{logId} {
-      allow read: if isWorkspaceMember(resource.data.workspaceId);
+      allow read: if isWorkspaceMember(resource.data.workspaceId) || isSuperAdmin();
       allow create: if isWorkspaceMember(request.resource.data.workspaceId);
       allow update, delete: if false;
     }
@@ -1000,10 +1084,10 @@ service cloud.firestore {
     // contains "_") sidesteps that: it's path data, always available
     // whether or not the document exists.
     match /ai_config/{configId} {
-      allow read: if isWorkspaceMember(configId.split('_')[0]);
-      allow create, update: if isWorkspaceMemberWithRole(request.resource.data.workspaceId, ['owner', 'admin'])
+      allow read: if isWorkspaceMember(configId.split('_')[0]) || isSuperAdmin();
+      allow create, update: if (isWorkspaceMemberWithRole(request.resource.data.workspaceId, ['owner', 'admin']) || isSuperAdmin())
         && request.resource.data.workspaceId == configId.split('_')[0];
-      allow delete: if isWorkspaceMemberWithRole(configId.split('_')[0], ['owner', 'admin']);
+      allow delete: if isWorkspaceMemberWithRole(configId.split('_')[0], ['owner', 'admin']) || isSuperAdmin();
     }
 
     // A user's connected Gmail account (OAuth refresh token,

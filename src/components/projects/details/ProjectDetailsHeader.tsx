@@ -15,6 +15,9 @@ import { useProjectDetailsContext } from "@/contexts/ProjectDetailsContext";
 import { useProjectActions } from "@/hooks/useProjectActions";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/useToast";
+import { useFeatureAccess } from "@/hooks/useFeatureAccess";
+import { usePlatformAppearance } from "@/hooks/usePlatformAppearance";
+import { projectAccentRgb, projectHeaderBackground } from "@/lib/constants/projectAppearance";
 import { ProjectFormValues } from "@/lib/validations/project.schema";
 
 /** Cover + identity + quick actions for a single project. Shared by every tab via the [projectId] layout. */
@@ -23,6 +26,8 @@ export function ProjectDetailsHeader() {
   const { firebaseUser } = useAuthContext();
   const actions = useProjectActions();
   const toast = useToast();
+  const { can } = useFeatureAccess();
+  const { appearance } = usePlatformAppearance();
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
@@ -63,13 +68,14 @@ export function ProjectDetailsHeader() {
           style={
             project.coverImageUrl
               ? { backgroundImage: `url(${project.coverImageUrl})`, backgroundSize: "cover", backgroundPosition: "center" }
-              : { background: `linear-gradient(135deg, rgb(${project.color} / 0.9), rgb(${project.color} / 0.45))` }
+              : { background: projectHeaderBackground(project, appearance) }
           }
         >
           <div className="absolute right-3 top-3">
             <ProjectQuickActionsMenu
               project={project}
               currentUid={uid}
+              triggerStyle="onCover"
               onEdit={() => setIsFormOpen(true)}
               onDuplicate={async () => {
                 const result = await actions.duplicate(project.id);
@@ -100,20 +106,22 @@ export function ProjectDetailsHeader() {
             <div className="flex items-start gap-3">
               <div
                 className="-mt-7 flex h-14 w-14 shrink-0 items-center justify-center rounded-theme border-4 border-surface bg-surface shadow-soft"
-                style={{ backgroundColor: `rgb(${project.color} / 0.12)` }}
+                style={{ backgroundColor: `rgb(${projectAccentRgb(project)} / 0.12)` }}
               >
-                <Icon className="h-6 w-6" style={{ color: `rgb(${project.color})` }} />
+                <Icon className="h-6 w-6" style={{ color: `rgb(${projectAccentRgb(project)})` }} />
               </div>
               <div>
                 <div className="flex items-center gap-2">
                   <h1 className="text-lg font-semibold text-foreground">{project.name}</h1>
-                  <button
-                    onClick={() => setIsFormOpen(true)}
-                    className="rounded-theme p-1 text-foreground-muted hover:bg-surface-muted"
-                    aria-label="Edit project"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
+                  {can("projects.edit") && (
+                    <button
+                      onClick={() => setIsFormOpen(true)}
+                      className="rounded-theme p-1 text-foreground-muted hover:bg-surface-muted"
+                      aria-label="Edit project"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </div>
                 <p className="mt-0.5 max-w-xl text-sm text-foreground-muted">
                   {project.description || "No description yet."}
@@ -149,7 +157,7 @@ export function ProjectDetailsHeader() {
             <div className="h-2 w-full overflow-hidden rounded-full bg-surface-muted">
               <div
                 className="h-full rounded-full transition-all"
-                style={{ width: `${project.progress}%`, backgroundColor: `rgb(${project.color})` }}
+                style={{ width: `${project.progress}%`, backgroundColor: `rgb(${projectAccentRgb(project)})` }}
               />
             </div>
           </div>

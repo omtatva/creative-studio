@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { getProjectIcon } from "@/lib/constants/projectIconMap";
 import { projectRoute } from "@/lib/constants/routes";
+import { projectAccentRgb } from "@/lib/constants/projectAppearance";
 
 /**
  * Top-level "Board" nav destination. A board belongs to one project
@@ -36,8 +37,8 @@ export default function BoardPickerPage() {
                 return (
                   <Link key={project.id} href={projectRoute(project.id, "board")}>
                     <Card className="flex items-center gap-3 transition-transform hover:-translate-y-0.5">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-theme" style={{ backgroundColor: `rgb(${project.color} / 0.12)` }}>
-                        <Icon className="h-5 w-5" style={{ color: `rgb(${project.color})` }} />
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-theme" style={{ backgroundColor: `rgb(${projectAccentRgb(project)} / 0.12)` }}>
+                        <Icon className="h-5 w-5" style={{ color: `rgb(${projectAccentRgb(project)})` }} />
                       </div>
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium text-foreground">{project.name}</p>

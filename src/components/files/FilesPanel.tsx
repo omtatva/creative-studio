@@ -9,6 +9,7 @@ import { FileRow } from "./FileRow";
 import { useFiles } from "@/hooks/useFiles";
 import { useFileActions } from "@/hooks/useFileActions";
 import { groupAssetVersions } from "@/lib/utils/assetVersions";
+import { useFeatureAccess } from "@/hooks/useFeatureAccess";
 
 interface FilesPanelProps {
   projectId?: string; // omit for the workspace-wide /files page
@@ -26,6 +27,7 @@ interface FilesPanelProps {
 export function FilesPanel({ projectId, showProjectLink }: FilesPanelProps) {
   const { files, isLoading } = useFiles(projectId);
   const actions = useFileActions();
+  const { can } = useFeatureAccess();
   const inputRef = useRef<HTMLInputElement>(null);
   const groups = useMemo(() => groupAssetVersions(files), [files]);
 
@@ -40,7 +42,7 @@ export function FilesPanel({ projectId, showProjectLink }: FilesPanelProps) {
     <Card>
       <CardHeader>
         <CardTitle>Files</CardTitle>
-        {projectId && (
+        {projectId && can("files.upload") && (
           <>
             <Button size="sm" onClick={() => inputRef.current?.click()} isLoading={actions.isSubmitting}>
               <Upload className="h-4 w-4" />

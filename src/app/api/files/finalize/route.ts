@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { verifyRequestAuth, AuthVerificationError, adminDb, adminStorage } from "@/lib/server/firebaseAdmin";
 import { reserveStorageBytes, resyncSlotCount, WorkspaceQuotaError } from "@/lib/server/workspaceQuota";
+import { isFeatureAllowed, featureDisabledBody } from "@/lib/server/featureAccess";
+import type { MemberRole } from "@/types/workspace.types";
 import { assetTypeFromContentType } from "@/lib/constants/creativeFiles";
 import { DEFAULT_ASSET_STATUS_ID } from "@/lib/constants/assetOptions";
 
@@ -132,6 +134,24 @@ export async function POST(request: NextRequest) {
         ? "your role on this project is Viewer"
         : "you haven't been added to this project";
     return NextResponse.json({ error: `You don't have permission to upload files to this project — ${reason}.`, code: "INSUFFICIENT_ROLE" }, { status: 403 });
+  }
+
+  // Super Admin's Feature Access matrix. A project-only collaborator with no
+  // workspace member record is evaluated as an Employee. Feature permission is
+  // necessary, not sufficient: the project-membership check above already ran.
+  const featureId = body.newVersionOfId ? "files.uploadVersion" : "files.upload";
+  if (!(await isFeatureAllowed((workspaceRole as MemberRole | undefined) ?? "member", featureId))) {
+    // The bytes were already sent to Storage (Storage rules can't read the
+    // matrix — this route is the authoritative gate), and no file record
+    // will ever point at them. Remove the orphan, but ONLY if no existing
+    // record owns that path, so a crafted storagePath can't delete a real file.
+    try {
+      const owned = await adminDb().collection("files").where("storagePath", "==", storagePath).limit(1).get();
+      if (owned.empty) await adminStorage().file(storagePath).delete({ ignoreNotFound: true });
+    } catch (cleanupErr) {
+      console.error("[files/finalize] couldn't clean up upload denied by Feature Access:", cleanupErr);
+    }
+    return NextResponse.json(featureDisabledBody(featureId), { status: 403 });
   }
 
   // Verify the project actually belongs to this workspace — same

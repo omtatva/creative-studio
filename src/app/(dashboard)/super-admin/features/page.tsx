@@ -77,6 +77,10 @@ export default function SuperAdminFeaturesPage() {
           <Link href={ROUTES.superAdminPlans} className="font-medium text-primary hover:underline">
             Plans
           </Link>
+          . To choose which workspace roles (Owner / Admin / Employee) may use them, use{" "}
+          <Link href={ROUTES.superAdminFeatureAccess} className="font-medium text-primary hover:underline">
+            Feature Access
+          </Link>
           .
         </p>
       </div>

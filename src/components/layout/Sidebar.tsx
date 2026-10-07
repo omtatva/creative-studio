@@ -23,6 +23,7 @@ import {
   ChevronsRight,
   X,
 } from "lucide-react";
+import { useFeatureAccess } from "@/hooks/useFeatureAccess";
 import { cn } from "@/lib/utils/cn";
 import { useUIStore } from "@/store/useUIStore";
 import { ROUTES } from "@/lib/constants/routes";
@@ -70,7 +71,7 @@ export function Sidebar() {
   const { settings } = useWorkspaceSettings();
   const { workspace } = useWorkspaceContext();
   const { profile } = useAuthContext();
-  const { canManageWorkspace, isLoading: isLoadingRole } = useCurrentMemberRole();
+  const { canAdministerWorkspace, isLoading: isLoadingRole } = useCurrentMemberRole();
   const isSuperAdmin = isSuperAdminUser(profile);
   const isCollapsed = useUIStore((s) => s.isSidebarCollapsed);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
@@ -86,12 +87,15 @@ export function Sidebar() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isMobileNavOpen, setMobileNavOpen]);
 
+  const { can } = useFeatureAccess();
   const sidebarConfig = settings?.sidebarConfig ?? DEFAULT_SIDEBAR_CONFIG;
   const fieldSecurity = settings?.fieldSecurity ?? DEFAULT_FIELD_SECURITY_SETTINGS;
 
   const forcedHidden: Record<string, boolean> = {
     reviews: fieldSecurity.hideReviews,
-    aiStudio: fieldSecurity.hideAI,
+    // hideAI is the per-workspace Access Control switch; ai.use is the platform Feature Access matrix.
+    aiStudio: fieldSecurity.hideAI || !can("ai.use"),
+    notifications: !can("notifications.view"),
     // A normal project member has no workspace-administration role —
     // Settings (Branding, AI, Access Control, Users, Roles, ...) is
     // owner/admin territory. Hiding the nav entry keeps their view
@@ -101,7 +105,9 @@ export function Sidebar() {
     // Firestore rules and canManageWorkspace checks on each settings
     // sub-page before this — this only removes the entry point, it
     // doesn't newly restrict anything that was actually reachable.
-    settings: !isLoadingRole && !canManageWorkspace,
+    // (A platform Super Admin has no members doc in a customer workspace but administers it —
+    // canAdministerWorkspace = Owner/Admin OR Super Admin.)
+    settings: !isLoadingRole && !canAdministerWorkspace,
   };
 
   // Per-workspace branding (settings.branding.logoUrl), NOT the app's

@@ -3,7 +3,7 @@
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft, FolderKanban, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ExternalLink, FolderKanban, Settings, Trash2 } from "lucide-react";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -13,6 +13,7 @@ import { Modal } from "@/components/ui/Modal";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/shared/ErrorState";
 import { useAuthContext } from "@/contexts/AuthContext";
+import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
 import { useToast } from "@/hooks/useToast";
 import { isSuperAdminUser } from "@/lib/constants/itSupport";
 import { getWorkspace, deleteWorkspaceAccess } from "@/services/workspaceService";
@@ -42,6 +43,8 @@ export default function SuperAdminCustomerDetailPage({ params }: { params: Promi
   const { workspaceId } = use(params);
   const router = useRouter();
   const { profile } = useAuthContext();
+  const { switchWorkspace } = useWorkspaceContext();
+  const [isOpening, setIsOpening] = useState<"dashboard" | "settings" | null>(null);
   const toast = useToast();
   const isSuperAdmin = isSuperAdminUser(profile);
 
@@ -142,6 +145,20 @@ export default function SuperAdminCustomerDetailPage({ params }: { params: Promi
     );
   }
 
+  // "Open Workspace": point the Super Admin's OWN active-workspace at this tenant (a write to their
+  // own profile only — no membership, no member count, no project access is created) and go there.
+  async function openWorkspace(target: "dashboard" | "settings") {
+    if (!workspace) return;
+    setIsOpening(target);
+    try {
+      await switchWorkspace(workspace.id);
+      router.push(target === "settings" ? ROUTES.settings : ROUTES.dashboard);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't open this workspace.");
+      setIsOpening(null);
+    }
+  }
+
   const billingView = resolveBillingView(workspace, subscription);
   const owner = members.find((m) => m.userId === workspace.ownerId) ?? null;
   const activeProjects = projects.filter((p) => !p.isArchived);
@@ -154,11 +171,21 @@ export default function SuperAdminCustomerDetailPage({ params }: { params: Promi
           <ArrowLeft className="h-3.5 w-3.5" />
           Customers / Workspaces
         </Link>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-xl font-semibold text-foreground">{workspace.name}</h1>
           <Badge variant="info">{planHeadline(billingView.plan, billingView.isTrialing)}</Badge>
           {billingView.trialExpired && <Badge variant="warning">Trial Expired</Badge>}
           {billingView.status === "pending_payment" && <Badge variant="warning">Pending payment</Badge>}
+          <div className="ml-auto flex items-center gap-2">
+            <Button size="sm" variant="outline" isLoading={isOpening === "dashboard"} disabled={isOpening !== null} onClick={() => openWorkspace("dashboard")}>
+              <ExternalLink className="h-4 w-4" />
+              Open Workspace
+            </Button>
+            <Button size="sm" isLoading={isOpening === "settings"} disabled={isOpening !== null} onClick={() => openWorkspace("settings")}>
+              <Settings className="h-4 w-4" />
+              Workspace Settings
+            </Button>
+          </div>
         </div>
         <p className="mt-1 text-sm text-foreground-muted">
           {workspace.companyName} · Created {formatDate(workspace.createdAt)}

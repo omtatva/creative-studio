@@ -12,9 +12,11 @@ interface InviteUserModalProps {
   onClose: () => void;
   onInvite: (values: InviteUserFormValues) => Promise<void>;
   isSubmitting: boolean;
+  /** Only the platform Super Admin may send Admin invitations; an Owner/Admin is limited to Member/Viewer (also enforced by the rules and the send route). */
+  allowAdminRole?: boolean;
 }
 
-export function InviteUserModal({ isOpen, onClose, onInvite, isSubmitting }: InviteUserModalProps) {
+export function InviteUserModal({ isOpen, onClose, onInvite, isSubmitting, allowAdminRole = false }: InviteUserModalProps) {
   const {
     register,
     handleSubmit,
@@ -34,7 +36,7 @@ export function InviteUserModal({ isOpen, onClose, onInvite, isSubmitting }: Inv
         <div>
           <label className="mb-1.5 block text-sm font-medium text-foreground">Role</label>
           <select {...register("role")} className="h-10 w-full rounded-theme border border-border bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
-            <option value="admin">Admin</option>
+            {allowAdminRole && <option value="admin">Admin</option>}
             <option value="member">Member</option>
             <option value="viewer">Viewer</option>
           </select>

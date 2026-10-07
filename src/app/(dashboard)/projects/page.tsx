@@ -8,6 +8,7 @@ import { useProjects } from "@/hooks/useProjects";
 import { useProjectMetrics } from "@/hooks/useProjectMetrics";
 import { useProjectOptions } from "@/hooks/useProjectOptions";
 import { useProjectActions } from "@/hooks/useProjectActions";
+import { useFeatureAccess } from "@/hooks/useFeatureAccess";
 import { useUIStore } from "@/store/useUIStore";
 import { SectionTabs } from "@/components/shared/SectionTabs";
 import { ProjectListToolbar } from "@/components/projects/ProjectListToolbar";
@@ -54,6 +55,7 @@ function ProjectsPageContent() {
     allProjectsForCounts,
   } = useProjects();
   const actions = useProjectActions();
+  const { can } = useFeatureAccess();
   const { metricsByProject } = useProjectMetrics();
   const toast = useToast();
   const router = useRouter();
@@ -103,6 +105,11 @@ function ProjectsPageContent() {
     // refresh or return to Projects needed.
     if (!workspaceId) {
       setIsCreateWorkspaceOpen(true);
+      return;
+    }
+    // Feature Access matrix — also covers the /projects?new=1 deep link. The server route re-checks.
+    if (!can("projects.create")) {
+      toast.error("Creating projects isn't enabled for your role. Contact your administrator.");
       return;
     }
     setEditingProject(null);

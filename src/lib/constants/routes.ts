@@ -43,6 +43,7 @@ export const ROUTES = {
   superAdminPlans: "/super-admin/plans",
   superAdminSales: "/super-admin/sales",
   superAdminFeatures: "/super-admin/features",
+  superAdminFeatureAccess: "/super-admin/feature-access",
   superAdminPlatformSettings: "/super-admin/platform-settings",
   superAdminAuditLogs: "/super-admin/audit-logs",
   workspaceCreate: "/workspace/create",

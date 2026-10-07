@@ -43,7 +43,11 @@ export function useCurrentMemberRole() {
           // back false. Previously this failed the exact same way
           // as an actual permission error, with nothing in the
           // console to tell them apart.
-          console.warn(`[useCurrentMemberRole] no membership doc at ${path} — role checks will all be false.`);
+          // A Super Admin administering a customer workspace is EXPECTED to have no
+          // membership doc (platform authority is not membership) — don't warn for that.
+          if (!isSuperAdminUser(profile)) {
+            console.warn(`[useCurrentMemberRole] no membership doc at ${path} — role checks will all be false.`);
+          }
           setRole(null);
           setIsLoading(false);
           return;
@@ -77,6 +81,16 @@ export function useCurrentMemberRole() {
   const canManageMembers = isSuperAdmin;
   /** Workspace owner/admin — project access and the customization settings they retain (e.g. the AI API key config). NOT member administration; see canManageMembers. */
   const canManageWorkspace = role === "owner" || role === "admin";
+  /**
+   * May use the workspace's Settings UI: its Owner/Admin, OR the platform Super Admin
+   * (platform authority — they are NOT a member of the customer's workspace and are never
+   * given a members record). Use this ONLY to decide Settings visibility/editability; it
+   * deliberately does not replace canManageWorkspace for project-access logic, and it grants
+   * nothing server-side (rules and routes make their own Super Admin decision).
+   */
+  const canAdministerWorkspace = canManageWorkspace || isSuperAdmin;
+  /** A Super Admin looking at a workspace they are not a member of (no members doc). */
+  const isViewingAsSuperAdmin = isSuperAdmin && !isLoading && role === null;
 
-  return { role, isLoading, error, canApproveReviews, canManageMembers, canManageWorkspace, isSuperAdmin };
+  return { role, isLoading, error, canApproveReviews, canManageMembers, canManageWorkspace, canAdministerWorkspace, isViewingAsSuperAdmin, isSuperAdmin };
 }

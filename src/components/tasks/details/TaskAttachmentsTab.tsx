@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ChevronDown, Download, File, Paperclip, Trash2, Upload } from "lucide-react";
+import { DownloadButton } from "@/components/files/DownloadButton";
 import { Card, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -88,9 +89,13 @@ export function TaskAttachmentsTab() {
                         <ChevronDown className={`h-3 w-3 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
                       </button>
                     )}
-                    <a href={current.url} download={attachment.fileName} className="rounded-theme p-1.5 text-foreground-muted hover:bg-surface-muted" aria-label="Download">
+                    <DownloadButton
+                      target={{ kind: "attachment", workspaceId: task.workspaceId, taskId: task.id, attachmentId: attachment.id, versionNumber: current.versionNumber }}
+                      className="rounded-theme p-1.5 text-foreground-muted hover:bg-surface-muted"
+                      ariaLabel="Download"
+                    >
                       <Download className="h-4 w-4" />
-                    </a>
+                    </DownloadButton>
                     <button
                       onClick={() => setDeleteTarget({ id: attachment.id, fileName: attachment.fileName })}
                       className="rounded-theme p-1.5 text-foreground-muted hover:bg-error/10 hover:text-error"
@@ -108,9 +113,13 @@ export function TaskAttachmentsTab() {
                         <span>
                           v{version.versionNumber} · {formatBytes(version.sizeBytes)} · {version.uploadedBy.displayName}
                         </span>
-                        <a href={version.url} download={attachment.fileName} className="text-primary hover:underline">
+                        <DownloadButton
+                          target={{ kind: "attachment", workspaceId: task.workspaceId, taskId: task.id, attachmentId: attachment.id, versionNumber: version.versionNumber }}
+                          className="text-primary hover:underline"
+                          ariaLabel={`Download v${version.versionNumber}`}
+                        >
                           Download
-                        </a>
+                        </DownloadButton>
                       </div>
                     ))}
                   </div>

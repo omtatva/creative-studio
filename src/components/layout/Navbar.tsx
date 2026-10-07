@@ -11,6 +11,7 @@ import { useAuthContext } from "@/contexts/AuthContext";
 import { useUIStore } from "@/store/useUIStore";
 import { useAuth } from "@/hooks/useAuth";
 import { useNotifications } from "@/hooks/useNotifications";
+import { useFeatureAccess } from "@/hooks/useFeatureAccess";
 import { useDismissableMenu } from "@/hooks/useDismissableMenu";
 import { ROUTES } from "@/lib/constants/routes";
 import { cn } from "@/lib/utils/cn";
@@ -26,6 +27,7 @@ export function Navbar() {
   const { profile } = useAuthContext();
   const { logout } = useAuth();
   const { unreadCount } = useNotifications();
+  const { can } = useFeatureAccess();
   const setMobileNavOpen = useUIStore((s) => s.setMobileNavOpen);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotifOpen, setIsNotifOpen] = useState(false);
@@ -47,6 +49,7 @@ export function Navbar() {
       <SearchBar containerClassName="hidden sm:block" placeholder="Search projects, tasks, files..." />
 
       <div className="ml-auto flex items-center gap-2">
+        {can("notifications.view") && (
         <div ref={notifRef} className="relative">
           <button
             className="relative rounded-theme p-2 text-foreground-muted hover:bg-surface-muted"
@@ -65,11 +68,12 @@ export function Navbar() {
                 </Link>
               </div>
               <div className="max-h-80 overflow-y-auto">
-                <NotificationsPanel take={8} compact />
+                <NotificationsPanel take={8} compact onNavigate={() => setIsNotifOpen(false)} />
               </div>
             </div>
           )}
         </div>
+        )}
 
         <div ref={profileRef} className="relative">
           <button

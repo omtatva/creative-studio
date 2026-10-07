@@ -8,6 +8,7 @@ import { formatBytes } from "@/lib/utils/fileFormat";
 import { formatDate } from "@/lib/utils/date";
 import { ProjectFile } from "@/types/file.types";
 import { useDismissableMenu } from "@/hooks/useDismissableMenu";
+import { DownloadButton } from "@/components/files/DownloadButton";
 
 interface FileInfoBarProps {
   asset: ProjectFile;
@@ -62,9 +63,9 @@ export function FileInfoBar({ asset, versionCount, stageName, onUploadVersion, o
         <button onClick={onUploadVersion} className="hidden rounded-theme p-2 text-foreground-muted hover:bg-surface-muted sm:block" aria-label="Upload new version" title="New version">
           <Upload className="h-4 w-4" />
         </button>
-        <a href={asset.url} download={asset.fileName} onClick={onDownload} className="rounded-theme p-2 text-foreground-muted hover:bg-surface-muted" aria-label="Download" title="Download">
+        <DownloadButton target={{ kind: "file", workspaceId: asset.workspaceId, fileId: asset.id }} onDownloaded={onDownload} className="rounded-theme p-2 text-foreground-muted hover:bg-surface-muted" ariaLabel="Download" title="Download">
           <Download className="h-4 w-4" />
-        </a>
+        </DownloadButton>
         <div ref={moreRef} className="relative">
           <button onClick={() => setIsMoreOpen((v) => !v)} className="rounded-theme p-2 text-foreground-muted hover:bg-surface-muted" aria-label="More file actions">
             <MoreHorizontal className="h-4 w-4" />

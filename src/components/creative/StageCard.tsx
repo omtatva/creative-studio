@@ -5,6 +5,7 @@ import { Archive, Layers, MoreVertical, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { Stage } from "@/types/stage.types";
 import { useDismissableMenu } from "@/hooks/useDismissableMenu";
+import { useFeatureAccess } from "@/hooks/useFeatureAccess";
 
 interface StageCardProps {
   stage: Stage;
@@ -18,6 +19,9 @@ interface StageCardProps {
 }
 
 export function StageCard({ stage, assetCount, pendingCount, approvedCount, isActive, onClick, onRename, onArchive }: StageCardProps) {
+  const { can } = useFeatureAccess();
+  const canRename = can("stages.edit");
+  const canArchive = can("stages.delete");
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState(stage.name);
@@ -67,6 +71,7 @@ export function StageCard({ stage, assetCount, pendingCount, approvedCount, isAc
         </div>
       </button>
 
+      {(canRename || canArchive) && (
       <div ref={menuRef} className="absolute right-1.5 top-1.5">
         <button
           onClick={(e) => {
@@ -80,6 +85,7 @@ export function StageCard({ stage, assetCount, pendingCount, approvedCount, isAc
         </button>
         {isMenuOpen && (
           <div className="absolute right-0 top-full z-10 mt-1 w-36 rounded-theme border border-border bg-surface py-1 shadow-soft-lg">
+            {canRename && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -90,6 +96,8 @@ export function StageCard({ stage, assetCount, pendingCount, approvedCount, isAc
             >
               <Pencil className="h-3.5 w-3.5" /> Rename
             </button>
+            )}
+            {canArchive && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -100,9 +108,11 @@ export function StageCard({ stage, assetCount, pendingCount, approvedCount, isAc
             >
               <Archive className="h-3.5 w-3.5" /> Archive
             </button>
+            )}
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

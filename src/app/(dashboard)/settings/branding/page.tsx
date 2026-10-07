@@ -33,7 +33,7 @@ export default function BrandingSettingsPage() {
   const { settings, isLoading, workspaceId } = useWorkspaceSettings();
   const { theme, setTheme } = useTheme();
   const toast = useToast();
-  const { canManageWorkspace } = useCurrentMemberRole();
+  const { canAdministerWorkspace: canManageWorkspace } = useCurrentMemberRole();
 
   const [uploadingField, setUploadingField] = useState<string | null>(null);
   const [draftColors, setDraftColors] = useState<ColorRoles>(DEFAULT_COLOR_ROLES);

@@ -3,6 +3,8 @@
 import { type ReactNode } from "react";
 import Link from "next/link";
 import { Sidebar } from "./Sidebar";
+import { ProjectAppearanceApplier } from "./ProjectAppearanceApplier";
+import { SuperAdminViewingBanner } from "./SuperAdminViewingBanner";
 import { Navbar } from "./Navbar";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { ErrorState } from "@/components/shared/ErrorState";
@@ -97,9 +99,11 @@ export function MainLayout({ children }: { children: ReactNode }) {
         </div>
       ) : (
         <div className="flex min-h-screen bg-background">
+          <ProjectAppearanceApplier />
           <Sidebar />
           <div className="flex min-h-screen flex-1 flex-col">
             <Navbar />
+            <SuperAdminViewingBanner />
             <main className="flex-1 p-4 md:p-6 lg:p-8">{children}</main>
           </div>
         </div>

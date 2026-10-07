@@ -2,7 +2,7 @@ import { doc, getDoc, getDocs, orderBy, query, serverTimestamp, setDoc, updateDo
 import { reviewsCol, reviewDoc } from "@/lib/firebase/firestore";
 import { setFileReviewStatus } from "@/services/fileService";
 import { logActivity } from "@/services/activityService";
-import { pushNotification } from "@/services/notificationService";
+import { notifyEvent } from "@/services/notificationService";
 import { Review } from "@/types/review.types";
 import { TaskActor } from "@/types/task.types";
 
@@ -100,9 +100,6 @@ export async function decideReview(
     targetId: reviewId,
   });
 
-  await pushNotification(workspaceId, existing.requestedBy.uid, {
-    title: decision === "approved" ? "Review approved" : "Changes requested",
-    body: `"${existing.title}" was ${decision === "approved" ? "approved" : "sent back for changes"} by ${reviewedBy.displayName}.`,
-    read: false,
-  });
+  // Delivered server-side to the real requester; best-effort.
+  await notifyEvent({ type: "review_decided", workspaceId, reviewId });
 }

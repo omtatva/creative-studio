@@ -13,7 +13,7 @@ import { getCurrentUser } from "@/lib/firebase/auth";
 import { tasksCol, taskDoc } from "@/lib/firebase/firestore";
 import { logTaskActivity, deleteAllTaskActivity } from "@/services/taskActivityService";
 import { logActivity } from "@/services/activityService";
-import { pushNotification } from "@/services/notificationService";
+import { notifyEvent } from "@/services/notificationService";
 import { deleteAllComments } from "@/services/commentService";
 import { deleteAllAttachments } from "@/services/attachmentService";
 import {
@@ -269,11 +269,8 @@ export async function assignTask(
     assignee ? `assigned this task to ${assignee.displayName}` : "unassigned this task"
   );
   if (assignee && assignee.uid !== actor.uid) {
-    await pushNotification(workspaceId, assignee.uid, {
-      title: "New task assigned",
-      body: `${actor.displayName} assigned you to "${existing.title}".`,
-      read: false,
-    });
+    // Delivered server-side (recipient/text/link derived from the real task); best-effort.
+    await notifyEvent({ type: "task_assigned", workspaceId, taskId });
   }
 }
 

@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle } from "@/components/ui/Card";
 import { useProjects } from "@/hooks/useProjects";
 import { ROUTES, projectRoute } from "@/lib/constants/routes";
 import { cn } from "@/lib/utils/cn";
+import { useFeatureAccess } from "@/hooks/useFeatureAccess";
 
 /**
  * "New Project" deep-links into the actual creation flow
@@ -18,6 +19,7 @@ import { cn } from "@/lib/utils/cn";
  */
 export function QuickActions() {
   const { allProjectsForCounts, isLoading } = useProjects();
+  const { can } = useFeatureAccess();
   const mostRecentProject = [...allProjectsForCounts]
     .filter((p) => !p.isArchived)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
@@ -30,13 +32,15 @@ export function QuickActions() {
         <CardTitle>Quick Actions</CardTitle>
       </CardHeader>
       <div className="grid grid-cols-2 gap-2">
-        <Link
-          href={`${ROUTES.projects}?new=1`}
-          className="flex h-auto flex-col items-center gap-2 rounded-theme border border-border py-4 text-foreground-muted hover:bg-surface-muted hover:text-foreground"
-        >
-          <FolderPlus className="h-5 w-5" />
-          <span className="text-xs">New Project</span>
-        </Link>
+        {can("projects.create") && (
+          <Link
+            href={`${ROUTES.projects}?new=1`}
+            className="flex h-auto flex-col items-center gap-2 rounded-theme border border-border py-4 text-foreground-muted hover:bg-surface-muted hover:text-foreground"
+          >
+            <FolderPlus className="h-5 w-5" />
+            <span className="text-xs">New Project</span>
+          </Link>
+        )}
 
         <Link
           href={ROUTES.team}

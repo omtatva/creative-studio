@@ -11,11 +11,14 @@ import { getProjectIcon } from "@/lib/constants/projectIconMap";
 import { useProjects } from "@/hooks/useProjects";
 import { useProjectOptions } from "@/hooks/useProjectOptions";
 import { projectRoute, ROUTES } from "@/lib/constants/routes";
+import { useFeatureAccess } from "@/hooks/useFeatureAccess";
+import { projectAccentRgb } from "@/lib/constants/projectAppearance";
 
 /** Now backed by the live, workspace-scoped project list (see useProjects) instead of a static placeholder. */
 export function RecentProjects() {
   const { allProjectsForCounts, isLoading } = useProjects();
   const { options } = useProjectOptions();
+  const { can } = useFeatureAccess();
   const recent = allProjectsForCounts.filter((p) => !p.isArchived).slice(0, 4);
 
   return (
@@ -41,12 +44,14 @@ export function RecentProjects() {
           title="No projects yet"
           description="Projects you create or join will show up here."
           action={
-            <Link href={ROUTES.projects}>
-              <Button size="sm">
-                <Plus className="h-4 w-4" />
-                New Project
-              </Button>
-            </Link>
+            can("projects.create") ? (
+              <Link href={ROUTES.projects}>
+                <Button size="sm">
+                  <Plus className="h-4 w-4" />
+                  New Project
+                </Button>
+              </Link>
+            ) : undefined
           }
         />
       ) : (
@@ -62,9 +67,9 @@ export function RecentProjects() {
               >
                 <div
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-theme"
-                  style={{ backgroundColor: `rgb(${project.color} / 0.12)` }}
+                  style={{ backgroundColor: `rgb(${projectAccentRgb(project)} / 0.12)` }}
                 >
-                  <Icon className="h-4.5 w-4.5" style={{ color: `rgb(${project.color})` }} />
+                  <Icon className="h-4.5 w-4.5" style={{ color: `rgb(${projectAccentRgb(project)})` }} />
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-foreground">{project.name}</p>

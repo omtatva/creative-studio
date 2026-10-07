@@ -21,6 +21,7 @@ import { useStageActions } from "@/hooks/useStageActions";
 import { useProjectDetailsContext } from "@/contexts/ProjectDetailsContext";
 import { useToast } from "@/hooks/useToast";
 import { groupAssetVersions, type AssetGroup } from "@/lib/utils/assetVersions";
+import { useFeatureAccess } from "@/hooks/useFeatureAccess";
 import { getUploadValidationError, ACCEPTED_FILE_INPUT } from "@/lib/constants/creativeFiles";
 import { fileReviewRoute } from "@/lib/constants/routes";
 import { cn } from "@/lib/utils/cn";
@@ -56,6 +57,8 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
   const fileActions = useFileActions();
   const stageActions = useStageActions();
   const toast = useToast();
+  const { can } = useFeatureAccess();
+  const canUpload = can("files.upload");
 
   const [activeStageId, setActiveStageId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -140,6 +143,10 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
   const uploadTargetStageId = activeStageId;
 
   async function handleFiles(fileList: File[]) {
+    if (!canUpload) {
+      toast.error("Uploading files isn't enabled for your role. Contact your administrator.");
+      return;
+    }
     if (!uploadTargetStageId) {
       toast.error("Select a stage before uploading.");
       return;
@@ -237,14 +244,18 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="outline" onClick={() => setIsStageFormOpen(true)}>
-              <Plus className="h-4 w-4" />
-              Create Stage
-            </Button>
-            <Button size="sm" onClick={() => setIsTemplateFormOpen(true)}>
-              <LayoutTemplate className="h-4 w-4" />
-              Create from Template
-            </Button>
+            {can("stages.create") && (
+              <>
+                <Button size="sm" variant="outline" onClick={() => setIsStageFormOpen(true)}>
+                  <Plus className="h-4 w-4" />
+                  Create Stage
+                </Button>
+                <Button size="sm" onClick={() => setIsTemplateFormOpen(true)}>
+                  <LayoutTemplate className="h-4 w-4" />
+                  Create from Template
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </Card>
@@ -295,13 +306,15 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
                   <Card className="flex flex-col gap-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <p className="text-sm font-semibold text-foreground">Upload to &quot;{stage.name}&quot;</p>
-                      <Button size="sm" onClick={() => uploadInputRef.current?.click()}>
-                        <Upload className="h-4 w-4" />
-                        Upload Files
-                      </Button>
+                      {canUpload && (
+                        <Button size="sm" onClick={() => uploadInputRef.current?.click()}>
+                          <Upload className="h-4 w-4" />
+                          Upload Files
+                        </Button>
+                      )}
                     </div>
 
-                    <CreativeUploadZone onFiles={handleFiles} disabled={false} disabledMessage="" />
+                    <CreativeUploadZone onFiles={handleFiles} disabled={!canUpload} disabledMessage="Uploading files isn't enabled for your role." />
 
                     {queue.length > 0 && (
                       <UploadProgressList items={queue} onDismiss={(id) => setQueue((prev) => prev.filter((q) => q.id !== id))} />

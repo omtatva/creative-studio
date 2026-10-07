@@ -4,6 +4,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Button } from "@/components/ui/Button";
 import { ProjectSection } from "@/types/project.types";
 import { ROUTES } from "@/lib/constants/routes";
+import { useFeatureAccess } from "@/hooks/useFeatureAccess";
 
 interface ProjectEmptyStateProps {
   section: ProjectSection;
@@ -14,6 +15,7 @@ interface ProjectEmptyStateProps {
 
 /** Message/action varies by section and whether a search/filter is active, so the empty state always explains *why* the list is empty. */
 export function ProjectEmptyState({ section, hasSearchOrFilters, onCreateProject, onClearSearch }: ProjectEmptyStateProps) {
+  const { can } = useFeatureAccess();
   if (hasSearchOrFilters) {
     return (
       <EmptyState
@@ -70,9 +72,11 @@ export function ProjectEmptyState({ section, hasSearchOrFilters, onCreateProject
       description="Create your first project and bring your team, files and reviews together."
       action={
         <div className="flex flex-wrap items-center justify-center gap-2">
-          <Button size="sm" onClick={onCreateProject}>
-            New Project
-          </Button>
+          {can("projects.create") && (
+            <Button size="sm" onClick={onCreateProject}>
+              New Project
+            </Button>
+          )}
           <Link href={ROUTES.aiStudio}>
             <Button size="sm" variant="outline">
               <Sparkles className="h-4 w-4" />

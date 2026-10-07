@@ -146,12 +146,17 @@ function renderLeadEmail(lead: SalesLead): string {
               ${row("Submitted", new Date(lead.createdAt).toLocaleString())}
             </table>
           </td></tr>
+          <tr><td style="padding:0 32px 32px 32px;"><a href="${escapeHtml(superAdminUrl(`/super-admin/sales/${lead.id}`))}" style="display:inline-block;padding:10px 16px;border-radius:8px;background-color:#3D6FA8;color:#ffffff;font-size:13px;font-weight:600;text-decoration:none;">Open this lead in Sales</a></td></tr>
           ${lead.message ? `<tr><td style="padding:0 32px 24px 32px;border-top:1px solid #e5e7eb;"><p style="margin:16px 0 4px 0;font-size:13px;color:#9ca3af;">Message</p><p style="margin:0;font-size:14px;color:#111827;line-height:1.6;">${escapeHtml(lead.message)}</p></td></tr>` : ""}
         </table>
       </td></tr>
     </table>
   </body>
 </html>`;
+}
+
+function superAdminUrl(path: string): string {
+  return `${(process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/$/, "")}${path}`;
 }
 
 function escapeHtml(value: string): string {

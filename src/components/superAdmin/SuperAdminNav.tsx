@@ -12,6 +12,7 @@ import {
   Flag,
   Settings2,
   ScrollText,
+  ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { ROUTES } from "@/lib/constants/routes";
@@ -29,6 +30,7 @@ const ITEMS = [
   { href: ROUTES.superAdminPlans, label: "Plans", icon: Tags },
   { href: ROUTES.superAdminSales, label: "Sales", icon: Handshake },
   { href: ROUTES.superAdminFeatures, label: "Features", icon: Flag },
+  { href: ROUTES.superAdminFeatureAccess, label: "Feature Access", icon: ShieldCheck },
   { href: ROUTES.superAdminPlatformSettings, label: "Platform Settings", icon: Settings2 },
   { href: ROUTES.superAdminAuditLogs, label: "Audit Logs", icon: ScrollText },
 ];

@@ -4,6 +4,7 @@ import { LayoutGrid, List, SlidersHorizontal, Plus, ArrowUpDown } from "lucide-r
 import { SearchBar } from "@/components/ui/SearchBar";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils/cn";
+import { useFeatureAccess } from "@/hooks/useFeatureAccess";
 import { ProjectSort, ProjectSortField, ProjectViewMode } from "@/types/project.types";
 
 const SORT_OPTIONS: { field: ProjectSortField; label: string }[] = [
@@ -36,6 +37,7 @@ export function ProjectListToolbar({
   onOpenFilters,
   onCreateProject,
 }: ProjectListToolbarProps) {
+  const { can } = useFeatureAccess();
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
       <SearchBar onSearch={onSearchChange} placeholder="Search by name, tag, owner, or status..." />
@@ -83,10 +85,12 @@ export function ProjectListToolbar({
           </button>
         </div>
 
-        <Button size="sm" onClick={onCreateProject}>
-          <Plus className="h-4 w-4" />
-          New Project
-        </Button>
+        {can("projects.create") && (
+          <Button size="sm" onClick={onCreateProject}>
+            <Plus className="h-4 w-4" />
+            New Project
+          </Button>
+        )}
       </div>
     </div>
   );

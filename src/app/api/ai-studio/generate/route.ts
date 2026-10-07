@@ -6,6 +6,8 @@ import { enforceRateLimit, RateLimitExceededError } from "@/lib/server/rateLimit
 import { decryptSecret, type EncryptedSecret } from "@/lib/server/secretCrypto";
 import { generateNvidiaText, NvidiaApiError } from "@/lib/server/nvidiaClient";
 import { resolveWorkspaceEntitlements } from "@/lib/server/workspaceEntitlements";
+import { isFeatureAllowed, featureDisabledBody } from "@/lib/server/featureAccess";
+import type { MemberRole } from "@/types/workspace.types";
 
 export const runtime = "nodejs";
 
@@ -108,6 +110,12 @@ export async function POST(request: NextRequest) {
   const memberSnap = await adminDb().collection("members").doc(`${workspaceId}_${uid}`).get();
   if (!memberSnap.exists) {
     return NextResponse.json({ error: "You aren't a member of this workspace." }, { status: 403 });
+  }
+
+  // Super Admin's Feature Access matrix (necessary, not sufficient — the
+  // plan entitlement and quota below still apply).
+  if (!(await isFeatureAllowed(memberSnap.data()?.role as MemberRole | undefined, "ai.use"))) {
+    return NextResponse.json(featureDisabledBody("ai.use"), { status: 403 });
   }
 
   const workspaceSnap = await adminDb().collection("workspaces").doc(workspaceId).get();

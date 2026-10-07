@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { verifyRequestAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
 import { reserveSlot, resyncSlotCount, WorkspaceQuotaError } from "@/lib/server/workspaceQuota";
+import { isFeatureAllowed, featureDisabledBody } from "@/lib/server/featureAccess";
+import type { MemberRole } from "@/types/workspace.types";
 import { logPlatformAudit } from "@/lib/server/platformAudit";
 
 export const runtime = "nodejs";
@@ -66,6 +68,11 @@ export async function POST(request: NextRequest) {
   if (!role || !["owner", "admin", "member"].includes(role)) {
     const reason = !memberSnap.exists ? "you're not a member of this workspace" : `your role (${role ?? "unknown"}) can't create projects`;
     return NextResponse.json({ error: `You don't have permission to create projects in this workspace — ${reason}.`, code: "INSUFFICIENT_ROLE" }, { status: 403 });
+  }
+
+  // Super Admin's Feature Access matrix — checked BEFORE a quota slot is reserved.
+  if (!(await isFeatureAllowed(role as MemberRole, "projects.create"))) {
+    return NextResponse.json(featureDisabledBody("projects.create"), { status: 403 });
   }
 
   try {

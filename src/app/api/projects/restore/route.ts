@@ -7,6 +7,8 @@ import { resolveEntitlements } from "@/lib/entitlements";
 import { logPlatformAudit } from "@/lib/server/platformAudit";
 import type { PlatformPlanConfig } from "@/types/platformConfig.types";
 import type { WorkspaceSubscription } from "@/types/billing.types";
+import { isFeatureAllowed, featureDisabledBody } from "@/lib/server/featureAccess";
+import type { MemberRole } from "@/types/workspace.types";
 
 export const runtime = "nodejs";
 
@@ -52,6 +54,10 @@ export async function POST(request: NextRequest) {
   const isProjectManager = projectRole === "owner" || projectRole === "manager";
   if (!isWorkspaceAdmin && !isProjectManager) {
     return NextResponse.json({ error: "You don't have permission to restore this project.", code: "INSUFFICIENT_ROLE" }, { status: 403 });
+  }
+  // Feature Access matrix: restoring is the inverse of archiving, so it follows projects.delete.
+  if (!(await isFeatureAllowed((workspaceRole as MemberRole | undefined) ?? "member", "projects.delete"))) {
+    return NextResponse.json(featureDisabledBody("projects.delete"), { status: 403 });
   }
 
   const [subSnap, planConfigSnap] = await Promise.all([

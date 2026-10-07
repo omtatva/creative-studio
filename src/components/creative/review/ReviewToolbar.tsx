@@ -10,6 +10,8 @@ import { ProjectFile } from "@/types/file.types";
 import { AssetStatusOption } from "@/types/settings.types";
 import { Stage } from "@/types/stage.types";
 import { useDismissableMenu } from "@/hooks/useDismissableMenu";
+import { useFeatureAccess } from "@/hooks/useFeatureAccess";
+import { DownloadButton } from "@/components/files/DownloadButton";
 
 interface ReviewToolbarProps {
   asset: ProjectFile;
@@ -63,6 +65,9 @@ export function ReviewToolbar({
   onSelectStatus,
   onOpenEditStatuses,
 }: ReviewToolbarProps) {
+  const { can } = useFeatureAccess();
+  const canUploadVersion = can("files.uploadVersion");
+  const canCreateTask = can("tasks.create");
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isMoveOpen, setIsMoveOpen] = useState(false);
   const moreRef = useDismissableMenu<HTMLDivElement>(isMoreOpen, () => {
@@ -107,18 +112,22 @@ export function ReviewToolbar({
       <div className="flex-1" />
 
       <div className="hidden items-center gap-1.5 md:flex">
-        <Button size="sm" variant="outline" onClick={onUploadVersion} isLoading={isUploadingVersion}>
-          <Upload className="h-3.5 w-3.5" />
-          {isUploadingVersion ? `${uploadProgress}%` : "New version"}
-        </Button>
+        {canUploadVersion && (
+          <Button size="sm" variant="outline" onClick={onUploadVersion} isLoading={isUploadingVersion}>
+            <Upload className="h-3.5 w-3.5" />
+            {isUploadingVersion ? `${uploadProgress}%` : "New version"}
+          </Button>
+        )}
         <Button size="sm" variant="outline" onClick={onSendForReview} disabled={asset.reviewStatus === "archived"}>
           <Send className="h-3.5 w-3.5" />
           Send for Review
         </Button>
-        <Button size="sm" variant="outline" onClick={onCreateTask}>
-          <ListPlus className="h-3.5 w-3.5" />
-          Create Task
-        </Button>
+        {canCreateTask && (
+          <Button size="sm" variant="outline" onClick={onCreateTask}>
+            <ListPlus className="h-3.5 w-3.5" />
+            Create Task
+          </Button>
+        )}
       </div>
 
       <button onClick={onShare} className="rounded-theme p-2 text-foreground-muted hover:bg-surface-muted" aria-label="Share">
@@ -139,26 +148,27 @@ export function ReviewToolbar({
         </button>
         {isMoreOpen && (
           <div className="absolute right-0 top-full z-10 mt-1 w-48 rounded-theme border border-border bg-surface py-1 shadow-soft-lg">
-            <a
-              href={asset.url}
-              download={asset.fileName}
-              onClick={() => {
+            <DownloadButton
+              target={{ kind: "file", workspaceId: asset.workspaceId, fileId: asset.id }}
+              onDownloaded={() => {
                 onDownload();
                 setIsMoreOpen(false);
               }}
               className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-surface-muted"
             >
               <Download className="h-4 w-4" /> Download
-            </a>
-            <button
-              onClick={() => {
-                onUploadVersion();
-                setIsMoreOpen(false);
-              }}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-surface-muted md:hidden"
-            >
-              <Upload className="h-4 w-4" /> Upload new version
-            </button>
+            </DownloadButton>
+            {canUploadVersion && (
+              <button
+                onClick={() => {
+                  onUploadVersion();
+                  setIsMoreOpen(false);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-surface-muted md:hidden"
+              >
+                <Upload className="h-4 w-4" /> Upload new version
+              </button>
+            )}
             <button
               onClick={() => {
                 onSendForReview();
@@ -168,15 +178,17 @@ export function ReviewToolbar({
             >
               <Send className="h-4 w-4" /> Send for Review
             </button>
-            <button
-              onClick={() => {
-                onCreateTask();
-                setIsMoreOpen(false);
-              }}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-surface-muted md:hidden"
-            >
-              <ListPlus className="h-4 w-4" /> Create Task
-            </button>
+            {canCreateTask && (
+              <button
+                onClick={() => {
+                  onCreateTask();
+                  setIsMoreOpen(false);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-surface-muted md:hidden"
+              >
+                <ListPlus className="h-4 w-4" /> Create Task
+              </button>
+            )}
             {stages.length > 0 && (
               <div className="border-t border-border">
                 <button

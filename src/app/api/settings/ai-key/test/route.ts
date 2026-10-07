@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { verifyRequestAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
+import { verifyRequestAuth, verifySuperAdminAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
 import { decryptSecret } from "@/lib/server/secretCrypto";
 import { generateNvidiaText, NvidiaApiError } from "@/lib/server/nvidiaClient";
 import { enforceRateLimit, RateLimitExceededError } from "@/lib/server/rateLimit";
@@ -69,8 +69,12 @@ export async function POST(request: NextRequest) {
   }
   const memberSnap = await adminDb().collection("members").doc(`${body.workspaceId}_${uid}`).get();
   const role = memberSnap.exists ? (memberSnap.data()?.role as string | undefined) : undefined;
+  // Owner/Admin of this workspace, or the platform Super Admin administering it (no membership needed).
   if (!role || !["owner", "admin"].includes(role)) {
-    return NextResponse.json({ error: "Only workspace owners and admins can test AI provider connections." }, { status: 403 });
+    const isSuperAdmin = await verifySuperAdminAuth(request).then(() => true).catch(() => false);
+    if (!isSuperAdmin) {
+      return NextResponse.json({ error: "Only workspace owners and admins can test AI provider connections." }, { status: 403 });
+    }
   }
 
   if (body.provider === "ollama") {

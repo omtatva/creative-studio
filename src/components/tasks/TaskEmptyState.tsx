@@ -2,6 +2,7 @@ import { CheckCircle2, ListChecks, SearchX } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Button } from "@/components/ui/Button";
 import { TaskSection } from "@/types/task.types";
+import { useFeatureAccess } from "@/hooks/useFeatureAccess";
 
 interface TaskEmptyStateProps {
   section: TaskSection;
@@ -11,6 +12,7 @@ interface TaskEmptyStateProps {
 }
 
 export function TaskEmptyState({ section, hasSearchOrFilters, onCreateTask, onClearSearch }: TaskEmptyStateProps) {
+  const { can } = useFeatureAccess();
   if (hasSearchOrFilters) {
     return (
       <EmptyState
@@ -36,7 +38,7 @@ export function TaskEmptyState({ section, hasSearchOrFilters, onCreateTask, onCl
       icon={<ListChecks className="h-9 w-9" />}
       title="No tasks yet"
       description="Create a task to start tracking work."
-      action={<Button size="sm" onClick={onCreateTask}>New Task</Button>}
+      action={can("tasks.create") ? <Button size="sm" onClick={onCreateTask}>New Task</Button> : undefined}
       className="py-16"
     />
   );
