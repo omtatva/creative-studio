@@ -10,6 +10,7 @@ import { ReviewStatusBadge } from "./ReviewStatusBadge";
 import { Review } from "@/types/review.types";
 import { formatDate } from "@/lib/utils/date";
 import { projectRoute } from "@/lib/constants/routes";
+import { aggregateRound, progressLabel } from "@/lib/reviewRounds";
 import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
 
 interface ReviewCardProps {
@@ -46,12 +47,21 @@ export function ReviewCard({ review, showProjectLink, onApprove, onRequestChange
         <ReviewStatusBadge status={review.status} />
       </div>
 
-      <div className="mt-3 flex items-center gap-1.5 text-xs text-foreground-muted">
-        <FileText className="h-3.5 w-3.5" />
-        {review.fileIds.length} file{review.fileIds.length === 1 ? "" : "s"}
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-foreground-muted">
+        <span className="flex items-center gap-1.5">
+          <FileText className="h-3.5 w-3.5" />
+          {review.fileIds.length} file{review.fileIds.length === 1 ? "" : "s"}
+        </span>
+        {review.schemaVersion === 2 && (
+          <>
+            <span>Round {review.roundNumber} · v{review.version}</span>
+            <span>{progressLabel(aggregateRound(Object.values(review.reviewers ?? {})))}</span>
+            {review.supersededByRoundId && <span>Superseded by a newer round</span>}
+          </>
+        )}
       </div>
 
-      {review.reviewedBy && (
+      {review.schemaVersion !== 2 && review.reviewedBy && (
         <div className="mt-3 flex items-center gap-2 rounded-theme bg-surface-muted px-2.5 py-2 text-xs text-foreground-muted">
           <Avatar name={review.reviewedBy.displayName} src={review.reviewedBy.photoURL} size="sm" />
           <span>
@@ -61,7 +71,7 @@ export function ReviewCard({ review, showProjectLink, onApprove, onRequestChange
         </div>
       )}
 
-      {review.status === "pending" && (
+      {review.schemaVersion !== 2 && review.status === "pending" && (
         <div className="mt-3 flex flex-col gap-2 border-t border-border pt-3">
           {canApproveReviews ? (
             <>

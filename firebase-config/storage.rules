@@ -203,7 +203,7 @@ service firebase.storage {
           || request.resource.contentType == 'application/octet-stream'
           || request.resource.contentType == ''
         )
-        && request.resource.size < 500 * 1024 * 1024;
+        && request.resource.size < 10 * 1024 * 1024 * 1024; // 10 GB — mirrors MAX_UPLOAD_SIZE_BYTES
     }
 
     // Task attachments have no established client-side type allow-list

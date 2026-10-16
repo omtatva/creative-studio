@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Check, CheckCircle2, ListPlus, MessageSquare, Play, Reply, Search, Trash2, X, XCircle } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
@@ -31,7 +31,10 @@ interface ReviewPanelProps {
   comments: AssetComment[];
   /** Current video/audio playhead, in seconds — powers the composer's "include current timestamp" checkbox. Ignored for images/PDFs. */
   currentTime: number;
+  /** Legacy (pre-rounds) single-approver request only — round reviews render through `roundSlot`. */
   pendingReview: Review | null;
+  /** The review-round panel (status, reviewers, decisions, history). */
+  roundSlot?: ReactNode;
   onApprove: () => void;
   onRequestChanges: () => void;
   isReviewSubmitting: boolean;
@@ -61,6 +64,7 @@ export function ReviewPanel({
   comments,
   currentTime,
   pendingReview,
+  roundSlot,
   onApprove,
   onRequestChanges,
   isReviewSubmitting,
@@ -138,6 +142,7 @@ export function ReviewPanel({
 
   return (
     <div className="flex h-full flex-col">
+      {roundSlot}
       {pendingReview && (
         <div className="flex flex-col gap-2 border-b border-border bg-surface-muted/50 p-3">
           <p className="text-xs font-medium text-foreground-muted">Pending review: &ldquo;{pendingReview.title}&rdquo;</p>
@@ -383,6 +388,9 @@ function CommentRow({
           <div className="flex min-w-0 items-center gap-1.5">
             <Avatar name={comment.author.displayName} src={comment.author.photoURL} size="sm" className="h-4.5 w-4.5 text-[9px]" />
             <p className="truncate text-sm font-medium text-foreground">{comment.author.displayName}</p>
+            {comment.authorId.startsWith("ext:") && (
+              <span className="shrink-0 rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-semibold text-warning" title="An external reviewer using a review link — not a workspace member">Client</span>
+            )}
           </div>
           <span className="shrink-0 text-xs text-foreground-muted" title={formatDate(comment.createdAt)}>{timeAgo(comment.createdAt)}</span>
         </div>

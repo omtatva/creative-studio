@@ -36,8 +36,8 @@ export const SUPPORTED_CREATIVE_EXTENSIONS: Record<string, AssetType> = {
 
 export const ACCEPTED_FILE_INPUT = ".mp4,.mov,.webm,.jpg,.jpeg,.png,.svg,.gif,.pdf,.mp3,.wav";
 
-/** Firebase Storage / most browsers comfortably handle this; a real limit avoids the upload silently hanging on a huge file. */
-export const MAX_UPLOAD_SIZE_BYTES = 500 * 1024 * 1024; // 500 MB
+/** Per-file ceiling for creative assets (mirrored by firebase-config/storage.rules). Uploads are resumable and streamed from the File, never buffered in memory. The WORKSPACE's total storage is a separate, plan-based limit. */
+export const MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB
 
 function extensionOf(fileName: string): string {
   return fileName.split(".").pop()?.toLowerCase() ?? "";
@@ -51,7 +51,7 @@ export function isSupportedCreativeFile(file: File): boolean {
 /** Single validation entry point for every upload path (initial upload, new version) — returns a user-facing message, or null if the file is fine. */
 export function getUploadValidationError(file: File): string | null {
   if (!isSupportedCreativeFile(file)) return `"${file.name}" isn't a supported creative file type.`;
-  if (file.size > MAX_UPLOAD_SIZE_BYTES) return `"${file.name}" is too large (max ${MAX_UPLOAD_SIZE_BYTES / (1024 * 1024)} MB).`;
+  if (file.size > MAX_UPLOAD_SIZE_BYTES) return `"${file.name}" is too large (max ${MAX_UPLOAD_SIZE_BYTES / (1024 * 1024 * 1024)} GB).`;
   return null;
 }
 

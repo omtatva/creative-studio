@@ -1,4 +1,6 @@
 import "server-only";
+import fs from "fs";
+import path from "path";
 import { cert, getApps, initializeApp, applicationDefault, type App } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
@@ -35,6 +37,13 @@ import { SUPER_ADMIN_EMAIL } from "@/lib/constants/itSupport";
  * Generate new private key in the Firebase console), matching this
  * codebase's existing convention of explicit .env.local secrets
  * rather than relying on ambient gcloud CLI state.
+ *
+ * LOCAL DEV ALTERNATIVE: FIREBASE_SERVICE_ACCOUNT_PATH = the path to the
+ * downloaded service-account JSON file (kept OUTSIDE the repo). Without ONE of
+ * these, every route that needs the Admin SDK for Firestore/Storage (file
+ * finalize, secure preview, downloads, review links...) fails with "Could not
+ * load the default credentials" and the browser only sees a generic 500.
+ * Production (App Hosting) sets neither and uses its automatic credentials.
  */
 
 function buildCredential() {
@@ -47,6 +56,14 @@ function buildCredential() {
       throw new Error(
         `FIREBASE_SERVICE_ACCOUNT_KEY is set but couldn't be parsed as base64-encoded service-account JSON: ${err instanceof Error ? err.message : "unknown error"}`
       );
+    }
+  }
+  const keyPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+  if (keyPath) {
+    try {
+      return cert(JSON.parse(fs.readFileSync(path.resolve(keyPath), "utf8")));
+    } catch (err) {
+      throw new Error(`FIREBASE_SERVICE_ACCOUNT_PATH is set but the file couldn't be read as service-account JSON: ${err instanceof Error ? err.message : "unknown error"}`);
     }
   }
   // Falls back to Application Default Credentials — automatically

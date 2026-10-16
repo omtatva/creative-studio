@@ -1,4 +1,4 @@
-import { deleteDoc, doc, getDoc, getDocs, increment, orderBy, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore";
+import { deleteDoc, doc, getDoc, getDocs, increment, orderBy, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
 import { filesCol, fileDoc, fileShareDoc, settingsDoc } from "@/lib/firebase/firestore";
 import {
   projectAssetRef,
@@ -14,7 +14,7 @@ import { logActivity } from "@/services/activityService";
 import { addFileToStage, getOrCreateDefaultStage } from "@/services/stageService";
 import { assetTypeFromContentType } from "@/lib/constants/creativeFiles";
 import { captureVideoThumbnail, readMediaDuration } from "@/lib/utils/videoThumbnail";
-import { AssetStatus, FileShareSettings, FileShareVisibility, FileSharePermission, ProjectFile } from "@/types/file.types";
+import { AssetStatus, FileShareSettings, ProjectFile } from "@/types/file.types";
 import { TaskActor } from "@/types/task.types";
 
 /**
@@ -207,47 +207,18 @@ export async function getFileByShareToken(shareToken: string): Promise<ProjectFi
 }
 
 /**
- * Enables/updates/disables link-sharing for one file — the Share dialog's
- * only write path (see ShareFileModal.tsx). Reuses the existing
- * `shareToken` across permission/visibility tweaks so a link someone
- * already copied keeps working; only generates a fresh one the first
- * time sharing is turned on, or after it was explicitly turned back to
- * "restricted" and re-enabled (an old copied link must NOT silently
- * start working again once disabled). Keeps the `file_shares/{shareToken}`
- * lookup doc (see FileShareLookup) in sync with the file's own
- * `shareSettings` — deletes the OLD lookup doc when disabling/rotating
- * so a stale copied link's token no longer resolves to anything.
+ * Turns OFF a LEGACY public file link (the old `shareSettings` + `file_shares` system).
+ *
+ * That system is RETIRED for new links — external sharing is now server-controlled review links (see
+ * /api/review-shares and lib/server/reviewShare.ts), and firestore.rules refuses any client attempt to create or
+ * change a legacy link (`file_shares` create/update are denied and `files.shareSettings` can only be cleared). What
+ * remains is the clean-up path: clear the file's settings, then delete the `file_shares/{token}` lookup so the old
+ * URL stops resolving at once. The old `/share/[token]` page then reports "this link doesn't work".
  */
-export async function updateFileShareSettings(
-  file: Pick<ProjectFile, "id" | "workspaceId" | "projectId">,
-  current: FileShareSettings | null,
-  patch: { visibility: FileShareVisibility; permission: FileSharePermission },
-  actor: TaskActor
-): Promise<FileShareSettings | null> {
+export async function turnOffLegacyFileShare(file: Pick<ProjectFile, "id">, current: FileShareSettings | null): Promise<void> {
   const previousToken = current && current.visibility !== "restricted" ? current.shareToken : null;
-
-  if (patch.visibility === "restricted") {
-    await updateDoc(fileDoc(file.id), { shareSettings: null, updatedAt: serverTimestamp() });
-    if (previousToken) await deleteDoc(fileShareDoc(previousToken));
-    return null;
-  }
-
-  const shareToken = previousToken ?? crypto.randomUUID();
-  const shareSettings: FileShareSettings = {
-    visibility: patch.visibility,
-    permission: patch.permission,
-    shareToken,
-    updatedAt: new Date().toISOString(),
-    updatedBy: actor.uid,
-  };
-  await updateDoc(fileDoc(file.id), { shareSettings, updatedAt: serverTimestamp() });
-  await setDoc(fileShareDoc(shareToken), {
-    shareToken,
-    fileId: file.id,
-    workspaceId: file.workspaceId,
-    projectId: file.projectId,
-  });
-  return shareSettings;
+  await updateDoc(fileDoc(file.id), { shareSettings: null, updatedAt: serverTimestamp() });
+  if (previousToken) await deleteDoc(fileShareDoc(previousToken));
 }
 
 export async function setFileReviewStatus(workspaceId: string, fileId: string, status: AssetStatus): Promise<void> {

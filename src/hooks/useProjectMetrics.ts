@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useFiles } from "./useFiles";
 import { useTasks } from "./useTasks";
 import { useReviews } from "./useReviews";
+import { isPendingRoundStatus } from "@/lib/reviewRounds";
 
 export interface ProjectMetrics {
   fileCount: number;
@@ -45,7 +46,7 @@ export function useProjectMetrics() {
     });
 
     reviews
-      .filter((r) => r.status === "pending")
+      .filter((r) => isPendingRoundStatus(r.status))
       .forEach((review) => {
         const existing = map.get(review.projectId) ?? { ...EMPTY_METRICS };
         existing.pendingReviewCount += 1;

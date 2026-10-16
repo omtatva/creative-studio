@@ -9,7 +9,15 @@ export type AuditAction =
   | "file_upload"
   | "review_approval"
   | "project_change"
-  | "task_change";
+  | "task_change"
+  // External review links (written server-side by lib/server/reviewShare.ts — never carry passwords or tokens).
+  | "review_link_created"
+  | "review_link_updated"
+  | "review_link_revoked"
+  | "external_review_opened"
+  | "external_comment_created"
+  | "external_review_approved"
+  | "external_changes_requested";
 
 /**
  * Compliance-grade audit trail — distinct from the human-readable

@@ -267,11 +267,29 @@ service cloud.firestore {
     // doesn't either. Knowing fileId/workspaceId/projectId alone grants
     // nothing further — every other collection's real rules still apply
     // in full (see isSharedFile() on `files` itself).
+    // LEGACY link sharing is RETIRED for new links: external sharing now uses server-controlled
+    // review links (review_shares, below). Existing lookup docs keep resolving until the file's
+    // link is turned off (delete stays allowed so Owners/editors can clean them up), but no
+    // client can create or change one any more.
     match /file_shares/{shareToken} {
       allow read: if isSignedIn();
-      allow create, update: if canWriteProject(request.resource.data.workspaceId, request.resource.data.projectId);
+      allow create, update: if false;
       allow delete: if canWriteProject(resource.data.workspaceId, resource.data.projectId);
     }
+
+    // EXTERNAL REVIEW LINKS — server-only. These hold token HASHES, password hashes, reviewer
+    // sessions and one-time email codes; no client (signed in or not) may ever read or write
+    // them. Every external-reviewer operation goes through /api/review/* (Admin SDK), and
+    // internal management through /api/review-shares. External reviewers get NO Firestore access.
+    match /review_shares/{id} { allow read, write: if false; }
+    match /review_requests/{id} { allow read, write: if false; }
+    match /review_sessions/{id} { allow read, write: if false; }
+    // An outside reviewer's e-mail address. The round document (readable by project members) carries only an opaque key + display name;
+    // the address lives here and is returned only by /api/review-rounds `details` to the person managing the review.
+    match /review_reviewer_identities/{id} { allow read, write: if false; }
+    match /review_email_codes/{id} { allow read, write: if false; }
+    match /download_tickets/{id} { allow read, write: if false; }
+    match /preview_tickets/{id} { allow read, write: if false; }
 
     match /workspaces/{workspaceId} {
       allow read: if isWorkspaceMember(workspaceId) || isSuperAdmin();
@@ -872,8 +890,12 @@ service cloud.firestore {
       // storage counter) is now admin-SDK-only.
       allow read: if canAccessProject(resource.data.workspaceId, resource.data.projectId) || isSharedFile(resource.data);
       allow create: if false;
+      // `shareSettings` (the retired legacy link) can no longer be SET from a client — only cleared to
+      // null (turning an existing legacy link off). New external sharing is server-controlled.
       allow update: if canWriteProject(resource.data.workspaceId, resource.data.projectId)
-        && request.resource.data.workspaceId == resource.data.workspaceId;
+        && request.resource.data.workspaceId == resource.data.workspaceId
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['shareSettings'])
+            || request.resource.data.get('shareSettings', null) == null);
       allow delete: if canWriteProject(resource.data.workspaceId, resource.data.projectId);
 
       function isParentFileMember() {
@@ -935,10 +957,16 @@ service cloud.firestore {
     // anyone who isn't workspace owner/admin/Super Admin.
     match /reviews/{reviewId} {
       allow read: if canAccessProject(resource.data.workspaceId, resource.data.projectId);
-      allow create: if canWriteProject(request.resource.data.workspaceId, request.resource.data.projectId);
+      // schemaVersion 2 = a server-managed review ROUND (reviewers, decisions, status, completedAt).
+      // Those are written only by /api/review-rounds and /api/review/* (Admin SDK), so a client can never
+      // create one, edit a decision, or delete the history. Legacy (pre-rounds) docs keep the old client paths.
+      allow create: if canWriteProject(request.resource.data.workspaceId, request.resource.data.projectId)
+        && !('schemaVersion' in request.resource.data);
       allow update: if canManageProject(resource.data.workspaceId, resource.data.projectId)
-        && request.resource.data.workspaceId == resource.data.workspaceId;
-      allow delete: if canWriteProject(resource.data.workspaceId, resource.data.projectId);
+        && request.resource.data.workspaceId == resource.data.workspaceId
+        && !('schemaVersion' in resource.data) && !('schemaVersion' in request.resource.data);
+      allow delete: if canWriteProject(resource.data.workspaceId, resource.data.projectId)
+        && !('schemaVersion' in resource.data);
     }
 
     // Creative Stages — same top-level-collection-with-workspaceId(+projectId)

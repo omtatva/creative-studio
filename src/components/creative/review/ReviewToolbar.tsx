@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Archive, ArrowLeft, Download, FolderInput, Link2, ListPlus, MoreHorizontal, PanelRight, Send, Upload } from "lucide-react";
+import { Archive, ArrowLeft, Download, FolderInput, GitCompare, Link2, ListPlus, MoreHorizontal, PanelRight, Send, Upload } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { StatusDropdown } from "./StatusDropdown";
 import { VersionDropdown } from "./VersionDropdown";
@@ -19,6 +19,8 @@ interface ReviewToolbarProps {
   stageName: string | null;
   versions: ProjectFile[];
   onSelectVersion: (v: ProjectFile) => void;
+  /** Present only when comparison is possible (2+ versions the viewer can access of a video/image asset). */
+  onCompare?: () => void;
   onBack: () => void;
   onShare: () => void;
   onUploadVersion: () => void;
@@ -46,6 +48,7 @@ export function ReviewToolbar({
   stageName,
   versions,
   onSelectVersion,
+  onCompare,
   onBack,
   onShare,
   onUploadVersion,
@@ -100,6 +103,12 @@ export function ReviewToolbar({
       </p>
 
       <VersionDropdown versions={versions} active={asset} onSelect={onSelectVersion} />
+      {onCompare && versions.length > 1 && (asset.assetType === "video" || asset.assetType === "image") && (
+        <Button size="sm" variant="outline" onClick={onCompare} aria-label="Compare versions of this asset">
+          <GitCompare className="h-3.5 w-3.5" />
+          Compare
+        </Button>
+      )}
 
       <StatusDropdown
         currentStatusId={asset.statusId}

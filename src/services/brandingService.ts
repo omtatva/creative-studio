@@ -18,7 +18,7 @@ import { BrandingSettings } from "@/types/settings.types";
  * nothing about color persistence is duplicated here.
  */
 
-const MAX_BRANDING_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB — logos/favicons/backgrounds are small, static images, not creative-asset uploads (which allow up to 500 MB elsewhere)
+const MAX_BRANDING_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB — logos/favicons/backgrounds are small, static images, not creative-asset uploads (which allow up to 10 GB elsewhere)
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/svg+xml", "image/gif"];
 
 function assertValidBrandingImage(file: File): void {

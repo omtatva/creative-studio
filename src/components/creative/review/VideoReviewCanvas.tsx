@@ -10,6 +10,7 @@ import type { PendingMarker } from "./ReviewPanel";
 import { cn } from "@/lib/utils/cn";
 import { formatDuration } from "@/lib/utils/fileFormat";
 import { getMarkerColor } from "@/lib/utils/markerColor";
+import { shouldForcePause, shouldToggleOnMediaClick } from "@/lib/utils/playbackInteraction";
 import { AnnotationData, AssetAnnotation, AssetComment, ProjectFile } from "@/types/file.types";
 
 const PLAYBACK_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
@@ -136,8 +137,47 @@ export function VideoReviewCanvas({
   function togglePlay() {
     const video = videoRef.current;
     if (!video) return;
-    if (video.paused) video.play();
+    if (video.paused) void video.play().catch(() => {});
     else video.pause();
+  }
+
+  // INTERACTION MODES (see lib/utils/playbackInteraction.ts). Normal mode: a click on the media toggles playback.
+  // Annotation mode / an open comment composer: it never does. Controls, the comment panel and the composer are
+  // siblings of this element (not descendants) and markers stop propagation, so none of them can bubble into here;
+  // the overlay wrapper below is pointer-transparent so clicks over the picture actually reach this handler.
+  function handleMediaClick(e: React.MouseEvent) {
+    if (shouldToggleOnMediaClick({ tool: activeTool, hasPendingMarker: pendingMarker !== null, clickDetail: e.detail })) togglePlay();
+  }
+
+  // Picking an annotation tool, or placing a marker (composer open), pauses immediately and STAYS paused — nothing
+  // here ever resumes playback, including after the comment is saved.
+  useEffect(() => {
+    if (shouldForcePause({ tool: activeTool, hasPendingMarker: pendingMarker !== null })) videoRef.current?.pause();
+  }, [activeTool, pendingMarker]);
+
+  // Pause and read the EXACT frame time (not the throttled timeupdate state) for a new timestamped marker/shape.
+  function pauseAtCurrentTime(): number {
+    const video = videoRef.current;
+    if (!video) return currentTime;
+    video.pause();
+    setCurrentTime(video.currentTime);
+    return video.currentTime;
+  }
+
+  // Clicking an existing shape: pause, jump to the moment it was drawn, and select the comment left at that moment.
+  function handleSelectAnnotation(annotation: AssetAnnotation) {
+    const video = videoRef.current;
+    video?.pause();
+    const ts = annotation.timestampSeconds;
+    if (ts !== null && video) {
+      video.currentTime = ts;
+      setCurrentTime(ts);
+    }
+    if (ts === null) return;
+    const related = comments
+      .filter((c) => c.timestampSeconds !== null && Math.abs((c.timestampSeconds as number) - ts) <= MARKER_VISIBILITY_TOLERANCE)
+      .sort((a, b) => Math.abs((a.timestampSeconds as number) - ts) - Math.abs((b.timestampSeconds as number) - ts))[0];
+    if (related) onSelectComment(related.id);
   }
 
   function flushSeek() {
@@ -212,7 +252,7 @@ export function VideoReviewCanvas({
             ref={videoRef}
             src={asset.url}
             className="h-full w-full object-contain"
-            onClick={activeTool === "select" ? togglePlay : undefined}
+            onClick={handleMediaClick}
             onPlay={() => setIsPlaying(true)}
             onPause={() => setIsPlaying(false)}
             onTimeUpdate={(e) => {
@@ -226,16 +266,17 @@ export function VideoReviewCanvas({
             }}
           />
           {contentBox && (
-            <div className="absolute" style={{ left: contentBox.left, top: contentBox.top, width: contentBox.width, height: contentBox.height }}>
+            <div className="pointer-events-none absolute" style={{ left: contentBox.left, top: contentBox.top, width: contentBox.width, height: contentBox.height }}>
               <AnnotationOverlay
                 annotations={positionedAnnotations}
                 comments={positionedComments}
                 activeTool={activeTool}
                 color={annotationColor}
                 highlightedCommentId={highlightedCommentId}
-                onCreateCommentMarker={(x, y) => onCreateCommentMarker(x, y, currentTime)}
-                onCreateShape={(data) => onCreateShape(data, currentTime)}
+                onCreateCommentMarker={(x, y) => onCreateCommentMarker(x, y, pauseAtCurrentTime())}
+                onCreateShape={(data) => onCreateShape(data, pauseAtCurrentTime())}
                 onSelectComment={onSelectComment}
+                onSelectAnnotation={handleSelectAnnotation}
                 onDeleteAnnotation={onDeleteAnnotation}
               />
 

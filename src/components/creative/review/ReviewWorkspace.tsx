@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
 import { ReviewToolbar } from "./ReviewToolbar";
@@ -10,24 +10,33 @@ import { AnnotationToolbar, type AnnotationTool } from "./AnnotationToolbar";
 import { VideoReviewCanvas } from "./VideoReviewCanvas";
 import { ImageReviewCanvas } from "./ImageReviewCanvas";
 import { PdfReviewCanvas } from "./PdfReviewCanvas";
+import { ReviewRoundPanel } from "./ReviewRoundPanel";
+import { markRoundCommented } from "@/services/reviewRoundService";
+import { isRoundOpen, normalizeRoundStatus, versionSwitchTarget } from "@/lib/reviewRounds";
 import { ReviewPanel, type PendingMarker, type ReviewPanelTab } from "./ReviewPanel";
 import { EditStatusesModal } from "./EditStatusesModal";
-import { ShareFileModal } from "./ShareFileModal";
+import { ReviewLinkModal } from "./ReviewLinkModal";
+import { InternalCompare } from "./InternalCompare";
+import { useSecurePreview } from "@/hooks/useSecurePreview";
+import { Loader } from "@/components/ui/Loader";
+import { ErrorState } from "@/components/shared/ErrorState";
+import type { CompareMode } from "@/components/review/compare/CompareView";
+import { defaultComparePair } from "@/lib/utils/compareSync";
 import { ConfirmModal } from "@/components/shared/ConfirmModal";
 import { SendForReviewModal } from "@/components/creative/SendForReviewModal";
 import { CreateTaskFromAssetModal } from "@/components/creative/CreateTaskFromAssetModal";
 import { FileTypeIcon } from "@/components/files/FileTypeIcon";
-import { Button } from "@/components/ui/Button";
 import { useFileComments } from "@/hooks/useFileComments";
 import { useFileAnnotations } from "@/hooks/useFileAnnotations";
 import { useFileActions } from "@/hooks/useFileActions";
 import { useAssetOptions } from "@/hooks/useAssetOptions";
 import { useReviews } from "@/hooks/useReviews";
+import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
+import type { Review } from "@/types/review.types";
 import { useReviewActions } from "@/hooks/useReviewActions";
 import { useStages } from "@/hooks/useStages";
 import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
 import { useAuthContext } from "@/contexts/AuthContext";
-import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
 import { useProjectDetailsContext } from "@/contexts/ProjectDetailsContext";
 import { useToast } from "@/hooks/useToast";
 import { getUploadValidationError } from "@/lib/constants/creativeFiles";
@@ -82,10 +91,17 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
   const router = useRouter();
   const toast = useToast();
   const { firebaseUser } = useAuthContext();
-  const { workspace } = useWorkspaceContext();
+  const { workspaceId } = useWorkspaceContext();
   const { project } = useProjectDetailsContext();
 
   const asset: ProjectFile = group.versions.find((v) => v.id === activeFileId) ?? group.latest;
+
+  // The player NEVER reads the permanent Firebase token URL (`asset.url`): media comes from a ticketed, access-rechecked
+  // preview route. Until the ticket is issued the canvases are not rendered at all (no fallback to the permanent URL),
+  // and the thumbnail/filmstrip URL — also a permanent token link — is withheld from the player.
+  const preview = useSecurePreview(asset);
+  const mediaAsset: ProjectFile | null = preview.url ? ({ ...asset, url: preview.url, thumbnailUrl: null } as ProjectFile) : null;
+  const needsMedia = asset.assetType === "video" || asset.assetType === "image" || asset.assetType === "pdf";
 
   const { comments } = useFileComments(asset.id);
   const { annotations } = useFileAnnotations(asset.id);
@@ -96,7 +112,19 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
   const reviewActions = useReviewActions();
   const { options: assetOptions, getStatus, saveStatuses } = useAssetOptions();
 
-  const pendingReview = reviews.find((r) => r.status === "pending" && r.fileIds.includes(asset.id)) ?? null;
+  // Legacy single-approver requests only; round reviews (schemaVersion 2) are decided through the round panel.
+  const pendingReview = reviews.find((r) => r.schemaVersion !== 2 && r.status === "pending" && r.fileIds.includes(asset.id)) ?? null;
+  const assetRounds = useMemo(
+    () => reviews.filter((r) => r.schemaVersion === 2 && r.assetGroupId === group.latest.assetGroupId).sort((a, b) => (b.roundNumber ?? 0) - (a.roundNumber ?? 0)),
+    [reviews, group.latest.assetGroupId]
+  );
+  const [sendPrefill, setSendPrefill] = useState<Review | null>(null);
+  // The round the user picked (history list or a ?round= notification link). The URL is NAVIGATION only: the round must be in the list
+  // of rounds the rules already let this user read for THIS asset, otherwise it is ignored and the normal review page shows.
+  const searchParams = useSearchParams();
+  const roundParam = searchParams.get("round");
+  const [selectedRoundId, setSelectedRoundId] = useState<string | null>(roundParam);
+  useEffect(() => { if (roundParam) setSelectedRoundId(roundParam); }, [roundParam]);
   const currentStage = stages.find((s) => s.id === asset.stageId) ?? null;
 
   const [activeTool, setActiveTool] = useState<AnnotationTool>("select");
@@ -118,8 +146,58 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const versionInputRef = useRef<HTMLInputElement>(null);
 
+  // Version comparison. URL state (?compare=2,3&mode=side) carries only version NUMBERS for deep links — it is never an
+  // authorization source: /api/files/compare re-validates both versions server-side on every open.
+  const [comparePair, setComparePair] = useState<[number, number] | null>(null);
+  const [compareMode, setCompareMode] = useState<CompareMode>("side");
+  const versionNumbers = group.versions.map((v) => v.versionNumber ?? 1);
+  const canCompare = group.versions.length > 1 && (asset.assetType === "video" || asset.assetType === "image");
+
+  function syncCompareUrl(pair: [number, number] | null, mode: CompareMode) {
+    const url = new URL(window.location.href);
+    if (pair) {
+      url.searchParams.set("compare", pair.join(","));
+      url.searchParams.set("mode", mode);
+    } else {
+      url.searchParams.delete("compare");
+      url.searchParams.delete("mode");
+    }
+    window.history.replaceState(null, "", url.toString());
+  }
+
+  useEffect(() => {
+    if (!canCompare) return;
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get("compare")?.split(",").map(Number);
+    if (raw && raw.length === 2 && raw.every((n) => Number.isInteger(n) && versionNumbers.includes(n)) && raw[0] !== raw[1]) {
+      setComparePair([raw[0]!, raw[1]!]);
+      if (params.get("mode") === "overlay") setCompareMode("overlay");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canCompare]);
+
+  function openCompare() {
+    const pair = defaultComparePair(versionNumbers, asset.versionNumber ?? 1);
+    if (!pair) return;
+    setComparePair(pair);
+    syncCompareUrl(pair, compareMode);
+  }
+
+  function exitCompare() {
+    setComparePair(null);
+    syncCompareUrl(null, compareMode);
+  }
+
   function goToVersion(v: ProjectFile) {
+    setSelectedRoundId(null);
     router.replace(fileReviewRoute(projectId, stageId, v.id));
+  }
+
+  /** Picking a round of another version also switches the viewed version, so a round's decisions are never shown beside a different version. */
+  function selectRound(r: Review) {
+    setSelectedRoundId(r.id);
+    const target = versionSwitchTarget(r, asset.id, group.versions.map((v) => v.id));
+    if (target) router.replace(`${fileReviewRoute(projectId, stageId, target)}?round=${r.id}`);
   }
 
   function handleBack() {
@@ -203,6 +281,11 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
 
   async function handleAddComment(body: string, parentCommentId: string | null, marker: PendingMarker | null): Promise<boolean> {
     const commentId = await fileActions.addComment(projectId, asset.id, asset.versionNumber, body, parentCommentId, marker ?? undefined);
+    if (commentId !== null && workspaceId) {
+      // A listed reviewer's comment on the round's own version earns them "Commented" (the server verifies the comment really exists).
+      const mine = assetRounds.find((r) => r.fileId === asset.id && isRoundOpen({ status: normalizeRoundStatus(r.status), supersededByRoundId: r.supersededByRoundId }) && r.reviewers?.[`u_${currentUid}`] && !r.reviewers[`u_${currentUid}`]!.removedAt);
+      if (mine) markRoundCommented(workspaceId, mine.id).catch(() => undefined);
+    }
     return commentId !== null;
   }
 
@@ -244,12 +327,13 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
         stageName={currentStage?.name ?? null}
         versions={group.versions}
         onSelectVersion={goToVersion}
+        onCompare={canCompare ? openCompare : undefined}
         onBack={handleBack}
         onShare={handleShare}
         onUploadVersion={() => versionInputRef.current?.click()}
         isUploadingVersion={isUploadingVersion}
         uploadProgress={uploadProgress}
-        onSendForReview={() => setIsSendReviewOpen(true)}
+        onSendForReview={() => { setSendPrefill(null); setIsSendReviewOpen(true); }}
         onCreateTask={() => {
           setTaskSourceComment(null);
           setIsCreateTaskOpen(true);
@@ -268,12 +352,35 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
       />
       <input ref={versionInputRef} type="file" className="hidden" onChange={(e) => handleUploadVersion(e.target.files?.[0] ?? null)} />
 
+      {comparePair ? (
+        <InternalCompare
+          versions={group.versions}
+          pair={comparePair}
+          onPairChange={(p) => {
+            setComparePair(p);
+            syncCompareUrl(p, compareMode);
+          }}
+          mode={compareMode}
+          onModeChange={(m) => {
+            setCompareMode(m);
+            syncCompareUrl(comparePair, m);
+          }}
+          actor={fileActions.currentActor()}
+          onExit={exitCompare}
+        />
+      ) : (
       <div className="relative flex min-h-0 flex-1">
         <div className="relative flex min-w-0 flex-1 flex-col">
           <div className="flex-1 overflow-hidden">
-            {asset.assetType === "video" ? (
+            {needsMedia && !mediaAsset ? (
+              preview.error ? (
+                <div className="flex h-full items-center justify-center bg-black p-6"><ErrorState title="Couldn't load the preview" message={preview.error} /></div>
+              ) : (
+                <div className="flex h-full items-center justify-center bg-black"><Loader label="Loading preview..." /></div>
+              )
+            ) : asset.assetType === "video" && mediaAsset ? (
               <VideoReviewCanvas
-                asset={asset}
+                asset={mediaAsset}
                 comments={comments}
                 annotations={annotations}
                 activeTool={activeTool}
@@ -297,9 +404,9 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
                 }}
                 onCancelPendingComment={() => setPendingMarker(null)}
               />
-            ) : asset.assetType === "image" ? (
+            ) : asset.assetType === "image" && mediaAsset ? (
               <ImageReviewCanvas
-                asset={asset}
+                asset={mediaAsset}
                 comments={comments.filter((c) => c.positionX !== null)}
                 annotations={annotations}
                 activeTool={activeTool}
@@ -313,9 +420,9 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
                 }}
                 onDeleteAnnotation={(id) => fileActions.deleteAnnotation(asset.id, id)}
               />
-            ) : asset.assetType === "pdf" ? (
+            ) : asset.assetType === "pdf" && mediaAsset ? (
               <PdfReviewCanvas
-                asset={asset}
+                asset={mediaAsset}
                 comments={comments.filter((c) => c.pageNumber !== null)}
                 annotations={annotations}
                 activeTool={activeTool}
@@ -338,9 +445,7 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
                   <p className="text-sm font-medium text-foreground">{asset.fileName}</p>
                   <p className="text-xs text-foreground-muted">No preview available for this file type.</p>
                 </div>
-                <a href={asset.url} target="_blank" rel="noopener noreferrer">
-                  <Button size="sm" variant="outline">Open</Button>
-                </a>
+                {/* No "Open" link: it pointed at the permanent file URL, i.e. a download that skipped the download permission. Use the toolbar's Download. */}
               </div>
             )}
           </div>
@@ -387,6 +492,19 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
                 comments={comments}
                 currentTime={currentTime}
                 pendingReview={pendingReview}
+                roundSlot={
+                  workspaceId ? (
+                    <ReviewRoundPanel
+                      workspaceId={workspaceId}
+                      asset={asset}
+                      rounds={assetRounds}
+                      currentUid={currentUid}
+                      selectedRoundId={selectedRoundId}
+                      onSelectRound={selectRound}
+                      onStartRound={(prefill) => { setSendPrefill(prefill); setIsSendReviewOpen(true); }}
+                    />
+                  ) : null
+                }
                 onApprove={async () => {
                   if (!pendingReview) return;
                   await reviewActions.approve(pendingReview.id);
@@ -416,6 +534,7 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
           )}
         </AnimatePresence>
       </div>
+      )}
 
       <FileInfoBar
         asset={asset}
@@ -444,14 +563,8 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
         isSubmitting={fileActions.isSubmitting}
       />
 
-      <ShareFileModal
-        asset={asset}
-        isOpen={isShareModalOpen}
-        onClose={() => setIsShareModalOpen(false)}
-        workspaceName={workspace?.name ?? "your organization"}
-        actor={fileActions.currentActor()}
-      />
-      <SendForReviewModal asset={asset} isOpen={isSendReviewOpen} onClose={() => setIsSendReviewOpen(false)} />
+      <ReviewLinkModal asset={asset} isOpen={isShareModalOpen} onClose={() => setIsShareModalOpen(false)} />
+      <SendForReviewModal asset={asset} isOpen={isSendReviewOpen} onClose={() => setIsSendReviewOpen(false)} prefill={sendPrefill} />
       <CreateTaskFromAssetModal
         asset={asset}
         comment={taskSourceComment}

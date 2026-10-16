@@ -6,6 +6,8 @@ import { enforceRateLimit, RateLimitExceededError } from "@/lib/server/rateLimit
 import { resolveProjectAccess } from "@/lib/server/projectAccess";
 import { isFeatureAllowed, featureDisabledBody } from "@/lib/server/featureAccess";
 import type { MemberRole } from "@/types/workspace.types";
+import { shareAllowsDownload } from "@/lib/server/reviewShare";
+import { expireAt } from "@/lib/server/ttl";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -112,6 +114,7 @@ export async function POST(request: NextRequest) {
     fileName: target.fileName,
     contentType: target.contentType,
     expiresAt: Date.now() + TICKET_TTL_MS,
+    expireAt: expireAt(Date.now() + TICKET_TTL_MS),
   });
   return NextResponse.json({ ticket, fileName: target.fileName });
 }
@@ -134,12 +137,21 @@ export async function GET(request: NextRequest) {
     const snap = await tx.get(ref);
     if (!snap.exists) return null;
     tx.delete(ref); // single use, valid or not
-    return snap.data() as { uid: string; workspaceId: string; projectId: string; storagePath: string; fileName: string; contentType: string; expiresAt: number };
+    return snap.data() as { uid: string; workspaceId: string; projectId: string; storagePath: string; fileName: string; contentType: string; expiresAt: number; shareId?: string };
   });
   if (!ticket || ticket.expiresAt < Date.now()) return NextResponse.json({ error: "This download link has expired. Try again." }, { status: 410 });
 
-  const auth = await authorize(ticket.uid, ticket.workspaceId, ticket.projectId);
-  if (!auth.ok) return auth.response;
+  if (ticket.shareId) {
+    // An EXTERNAL REVIEWER's ticket (see /api/review/download): authorized by the share, not by
+    // workspace/project membership. Re-checked at redemption, so a link revoked/expired (or whose
+    // download permission was switched off) in the last minute is refused.
+    if (!(await shareAllowsDownload(ticket.shareId))) {
+      return NextResponse.json({ error: "This download isn't available." }, { status: 403 });
+    }
+  } else {
+    const auth = await authorize(ticket.uid, ticket.workspaceId, ticket.projectId);
+    if (!auth.ok) return auth.response;
+  }
 
   const file = adminStorage().file(ticket.storagePath);
   const [exists] = await file.exists();

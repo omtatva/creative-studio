@@ -65,6 +65,8 @@ export function useCurrentMemberRole() {
       }
     );
     return unsubscribe;
+    // `profile` is only read to silence a warning for Super Admin; resubscribing on every profile change would be wasteful.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, firebaseUser]);
 
   const canApproveReviews = role === "owner" || role === "admin";

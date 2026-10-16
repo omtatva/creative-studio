@@ -26,6 +26,12 @@ interface AnnotationOverlayProps {
   onSelectComment: (commentId: string) => void;
   /** Present only when the "delete" tool is active — clicking an existing shape removes it. */
   onDeleteAnnotation?: (annotationId: string) => void;
+  /**
+   * Clicking an EXISTING shape/text annotation in normal (select) mode. When provided, shapes get a real
+   * pointer target that OWNS the click (stopPropagation) — so selecting one can never fall through to the
+   * media underneath and toggle playback. Without it the shapes stay purely visual, as before.
+   */
+  onSelectAnnotation?: (annotation: AssetAnnotation) => void;
   className?: string;
 }
 
@@ -58,6 +64,7 @@ export function AnnotationOverlay({
   onCreateCommentMarker,
   onSelectComment,
   onDeleteAnnotation,
+  onSelectAnnotation,
   className,
 }: AnnotationOverlayProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -186,6 +193,7 @@ export function AnnotationOverlay({
               annotation={a}
               isDeletable={activeTool === "delete"}
               onDelete={() => onDeleteAnnotation?.(a.id)}
+              onSelect={activeTool === "select" && onSelectAnnotation ? () => onSelectAnnotation(a) : undefined}
             />
           ))}
 
@@ -215,18 +223,24 @@ export function AnnotationOverlay({
         .map((a) => {
           const data = a.data as Extract<AnnotationData, { kind: "text" }>;
           const deletable = activeTool === "delete";
+          const selectable = activeTool === "select" && !!onSelectAnnotation;
           return (
             <div
               key={a.id}
-              onPointerDown={(e) => deletable && e.stopPropagation()}
+              onPointerDown={(e) => (deletable || selectable) && e.stopPropagation()}
               onClick={(e) => {
+                if (selectable) {
+                  e.stopPropagation();
+                  onSelectAnnotation?.(a);
+                  return;
+                }
                 if (!deletable) return;
                 e.stopPropagation();
                 onDeleteAnnotation?.(a.id);
               }}
               className={cn(
                 "absolute -translate-y-1/2 rounded bg-black/70 px-1.5 py-0.5 text-xs font-medium text-white shadow",
-                deletable ? "pointer-events-auto cursor-pointer ring-2 ring-error hover:bg-error/70" : "pointer-events-none"
+                deletable ? "pointer-events-auto cursor-pointer ring-2 ring-error hover:bg-error/70" : selectable ? "pointer-events-auto cursor-pointer" : "pointer-events-none"
               )}
               style={{ left: `${data.x * 100}%`, top: `${data.y * 100}%` }}
             >
@@ -289,11 +303,13 @@ function AnnotationShape({
   isDraft,
   isDeletable,
   onDelete,
+  onSelect,
 }: {
   annotation: AssetAnnotation;
   isDraft?: boolean;
   isDeletable?: boolean;
   onDelete?: () => void;
+  onSelect?: () => void;
 }) {
   const { data, color } = annotation;
   const strokeProps = {
@@ -312,15 +328,54 @@ function AnnotationShape({
       : undefined,
   };
 
+  // In normal (select) mode a thin line is a poor click target, so each shape gets an invisible, wider twin that
+  // OWNS the pointer (pointer-events: stroke) — clicking a shape selects/seeks and never reaches the video beneath.
+  const hit = onSelect
+    ? ({
+        stroke: "transparent",
+        strokeWidth: 14,
+        vectorEffect: "non-scaling-stroke" as const,
+        fill: "none",
+        style: { pointerEvents: "stroke", cursor: "pointer" } as const,
+        onPointerDown: (e: ReactPointerEvent) => e.stopPropagation(),
+        onClick: (e: ReactMouseEvent) => {
+          e.stopPropagation();
+          onSelect();
+        },
+      } as const)
+    : null;
+
   switch (data.kind) {
     case "circle":
-      return <ellipse cx={data.cx} cy={data.cy} rx={data.rx} ry={data.ry} {...strokeProps} />;
+      return (
+        <g>
+          <ellipse cx={data.cx} cy={data.cy} rx={data.rx} ry={data.ry} {...strokeProps} />
+          {hit && <ellipse cx={data.cx} cy={data.cy} rx={data.rx} ry={data.ry} {...hit} />}
+        </g>
+      );
     case "rectangle":
-      return <rect x={data.x} y={data.y} width={data.width} height={data.height} {...strokeProps} />;
+      return (
+        <g>
+          <rect x={data.x} y={data.y} width={data.width} height={data.height} {...strokeProps} />
+          {hit && <rect x={data.x} y={data.y} width={data.width} height={data.height} {...hit} />}
+        </g>
+      );
     case "arrow":
-      return <line x1={data.x1} y1={data.y1} x2={data.x2} y2={data.y2} {...strokeProps} stroke={strokeProps.stroke} markerEnd="url(#annotation-arrowhead)" />;
-    case "freehand":
-      return <polyline points={data.points.map((p) => `${p.x},${p.y}`).join(" ")} {...strokeProps} strokeLinejoin="round" strokeLinecap="round" />;
+      return (
+        <g>
+          <line x1={data.x1} y1={data.y1} x2={data.x2} y2={data.y2} {...strokeProps} stroke={strokeProps.stroke} markerEnd="url(#annotation-arrowhead)" />
+          {hit && <line x1={data.x1} y1={data.y1} x2={data.x2} y2={data.y2} {...hit} />}
+        </g>
+      );
+    case "freehand": {
+      const points = data.points.map((p) => `${p.x},${p.y}`).join(" ");
+      return (
+        <g>
+          <polyline points={points} {...strokeProps} strokeLinejoin="round" strokeLinecap="round" />
+          {hit && <polyline points={points} {...hit} strokeLinejoin="round" strokeLinecap="round" />}
+        </g>
+      );
+    }
     default:
       return null;
   }

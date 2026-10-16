@@ -22,7 +22,9 @@ import type { MemberRole } from "@/types/workspace.types";
  * employees does not let one upload to a project they aren't on.
  *
  * INVARIANT the Firestore rules rely on: every CONFIGURABLE permission
- * defaults to TRUE for admin and member (today's behaviour), and the
+ * that a rule consults defaults to TRUE for admin and member (today's
+ * behaviour; `reviews.approve` is configurable but no rule reads it, so it
+ * may default to false for member), and the
  * rules treat "no document / key not explicitly false" as allowed. If a
  * configurable default is ever made false, firestore.rules'
  * featureAllowed() must change with it (a unit-style check in the
@@ -95,7 +97,10 @@ export const FEATURE_PERMISSIONS: FeaturePermissionDef[] = [
   { id: "tasks.edit", label: "Tasks — Edit", group: "Tasks", configurable: true, defaults: ALL, enforcedBy: "Firestore rules (tasks update)" },
   { id: "reviews.view", label: "Reviews — View", group: "Reviews", configurable: false, defaults: ALL, enforcedBy: "Project membership (rules)" },
   { id: "reviews.comment", label: "Reviews — Comment", group: "Reviews", configurable: false, defaults: ALL, enforcedBy: "Project membership (rules)" },
-  { id: "reviews.approve", label: "Reviews — Approve", group: "Reviews", configurable: false, defaults: OWNER_ADMIN, enforcedBy: "Workspace role (existing review rules)" },
+  // Configurable so an Employee who is a project member can be a formal reviewer without being promoted to workspace Admin. The DEFAULT is unchanged
+  // (Owner/Admin only). No Firestore rule consults this id, so the "configurable defaults to TRUE" fallback invariant above does not apply to it;
+  // it is enforced by POST /api/review-rounds (decide) together with project membership and a non-Viewer project role.
+  { id: "reviews.approve", label: "Reviews — Approve", group: "Reviews", configurable: true, defaults: OWNER_ADMIN, enforcedBy: "POST /api/review-rounds (decide) + project membership/role" },
   { id: "ai.use", label: "AI Studio", group: "AI", configurable: true, defaults: ALL, enforcedBy: "POST /api/ai-studio/generate (+ plan entitlement & quota)" },
   { id: "workspace.customize", label: "Workspace customization", group: "Workspace & billing", configurable: false, defaults: OWNER_ADMIN, enforcedBy: "Workspace role (settings rules)" },
   { id: "billing.view", label: "Billing — View", group: "Workspace & billing", configurable: false, defaults: OWNER_ADMIN, enforcedBy: "Subscription read rule (owner/admin)" },
