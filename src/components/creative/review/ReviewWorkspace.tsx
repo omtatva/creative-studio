@@ -29,6 +29,7 @@ import { FileTypeIcon } from "@/components/files/FileTypeIcon";
 import { useFileComments } from "@/hooks/useFileComments";
 import { useFileAnnotations } from "@/hooks/useFileAnnotations";
 import { useFileActions } from "@/hooks/useFileActions";
+import * as fileService from "@/services/fileService";
 import { useAssetOptions } from "@/hooks/useAssetOptions";
 import { useReviews } from "@/hooks/useReviews";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
@@ -143,6 +144,8 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
   const [isEditStatusesOpen, setIsEditStatusesOpen] = useState(false);
   const [isSavingStatuses, setIsSavingStatuses] = useState(false);
   const [isArchiveConfirmOpen, setIsArchiveConfirmOpen] = useState(false);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const versionInputRef = useRef<HTMLInputElement>(null);
 
@@ -241,6 +244,23 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
     }
     toast.success("Archived");
     handleBack();
+  }
+
+  /** Permanently deletes the version on screen. If other versions remain, land on the newest of them; otherwise go back to the workspace. */
+  async function handleDelete() {
+    setIsDeleting(true);
+    try {
+      await fileService.deleteProjectFile(asset.workspaceId, asset.id);
+      setIsDeleteConfirmOpen(false);
+      toast.success("Deleted");
+      const remaining = group.versions.filter((v) => v.id !== asset.id).sort((a, b) => (b.versionNumber ?? 1) - (a.versionNumber ?? 1));
+      if (remaining[0]) router.replace(fileReviewRoute(projectId, stageId, remaining[0].id));
+      else handleBack();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete this file. Please try again.");
+    } finally {
+      setIsDeleting(false);
+    }
   }
 
   function handleSelectComment(comment: AssetComment) {
@@ -543,6 +563,7 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
         onUploadVersion={() => versionInputRef.current?.click()}
         onDownload={() => fileActions.logDownload(asset.id, asset.fileName)}
         onArchive={() => setIsArchiveConfirmOpen(true)}
+        onDelete={() => setIsDeleteConfirmOpen(true)}
       />
 
       <EditStatusesModal
@@ -551,6 +572,17 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
         statuses={assetOptions.statuses}
         isSaving={isSavingStatuses}
         onSave={handleSaveStatuses}
+      />
+
+      <ConfirmModal
+        isOpen={isDeleteConfirmOpen}
+        onClose={() => setIsDeleteConfirmOpen(false)}
+        onConfirm={handleDelete}
+        title={group.versions.length > 1 ? `Delete version ${asset.versionNumber}?` : "Delete this file?"}
+        description={`"${asset.fileName}"${group.versions.length > 1 ? ` (v${asset.versionNumber})` : ""} will be permanently deleted along with its comments, and any review links for it stop working. This can't be undone. Archive it instead if you may need it later.`}
+        confirmLabel="Delete permanently"
+        isDanger
+        isSubmitting={isDeleting}
       />
 
       <ConfirmModal

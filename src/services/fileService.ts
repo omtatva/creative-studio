@@ -1,14 +1,11 @@
-import { deleteDoc, doc, getDoc, getDocs, increment, orderBy, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
-import { filesCol, fileDoc, fileShareDoc, settingsDoc } from "@/lib/firebase/firestore";
+import { deleteDoc, doc, getDoc, getDocs, orderBy, query, serverTimestamp, updateDoc, where } from "firebase/firestore";
+import { filesCol, fileDoc, fileShareDoc } from "@/lib/firebase/firestore";
 import {
   projectAssetRef,
   projectAssetThumbRef,
   uploadFile as uploadToStorage,
   uploadFileWithProgress,
-  deleteFile as deleteFromStorage,
 } from "@/lib/firebase/storage";
-import { ref } from "firebase/storage";
-import { storage } from "@/lib/firebase/config";
 import { getCurrentUser } from "@/lib/firebase/auth";
 import { logActivity } from "@/services/activityService";
 import { addFileToStage, getOrCreateDefaultStage } from "@/services/stageService";
@@ -285,44 +282,21 @@ export async function assignFileToStage(workspaceId: string, fileId: string, sta
   if (stageId) await addFileToStage(stageId, fileId);
 }
 
-export async function deleteProjectFile(workspaceId: string, fileId: string, actor: TaskActor): Promise<void> {
-  const existing = await getFile(workspaceId, fileId);
-  if (!existing) throw new Error("File not found in this workspace.");
-
-  try {
-    await deleteFromStorage(ref(storage, existing.storagePath));
-  } catch {
-    // Best-effort — don't block deleting the record if storage cleanup fails.
-  }
-
-  await deleteDoc(fileDoc(fileId));
-  await updateDoc(settingsDoc(workspaceId), { "storage.usedBytes": increment(-existing.sizeBytes) } as never);
-  // Authoritative counter resync (audit Priority 4) — mirrors the
-  // project/member pattern exactly: an absolute recompute from a real
-  // aggregate, never a blind decrement, so this stays safe to call
-  // even if it somehow ran twice. Fire-and-forget: the file is already
-  // deleted above regardless of whether this succeeds.
-  void resyncStorageCount(workspaceId);
-  await logActivity(workspaceId, {
-    actorId: actor.uid,
-    actorName: actor.displayName,
-    action: `deleted "${existing.fileName}"`,
-    targetType: "file",
-    targetId: fileId,
+/**
+ * Permanently deletes ONE file (one version). Goes through /api/files/delete, which re-checks that the caller is the uploader or a
+ * project manager/admin, removes the Storage object + thumbnail, the record and its comments, revokes its review links, promotes the
+ * previous version if needed, gives the storage quota back and audits it. The server derives the actor from the signed-in user.
+ */
+export async function deleteProjectFile(workspaceId: string, fileId: string): Promise<void> {
+  const user = getCurrentUser();
+  if (!user) throw new Error("You must be signed in.");
+  const idToken = await user.getIdToken();
+  const response = await fetch("/api/files/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+    body: JSON.stringify({ workspaceId, fileId }),
   });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.error ?? "Couldn't delete this file. Try again.");
 }
 
-async function resyncStorageCount(workspaceId: string): Promise<void> {
-  try {
-    const user = getCurrentUser();
-    if (!user) return;
-    const idToken = await user.getIdToken();
-    await fetch("/api/workspaces/resync-count", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
-      body: JSON.stringify({ workspaceId, metric: "storage" }),
-    });
-  } catch (err) {
-    console.error("[fileService] storage-count resync failed (non-fatal):", err);
-  }
-}

@@ -66,7 +66,7 @@ export function useFileActions() {
 
   async function remove(fileId: string) {
     if (!workspaceId) return null;
-    return run(() => fileService.deleteProjectFile(workspaceId, fileId, currentActor()));
+    return run(() => fileService.deleteProjectFile(workspaceId, fileId));
   }
 
   async function archive(fileId: string) {

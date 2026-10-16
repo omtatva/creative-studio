@@ -354,6 +354,11 @@ export async function setActiveWorkspace(uid: string, workspaceId: string): Prom
   await setDoc(userDoc(uid), { activeWorkspaceId: workspaceId, updatedAt: serverTimestamp() } as never, { merge: true });
 }
 
+/** Clears a STALE active-workspace pointer (the workspace was deleted, or the user was removed from it) so the account lands in the normal "no workspace yet" state instead of an error screen. */
+export async function clearActiveWorkspace(uid: string): Promise<void> {
+  await setDoc(userDoc(uid), { activeWorkspaceId: null, updatedAt: serverTimestamp() } as never, { merge: true });
+}
+
 /**
  * Updates the workspace profile fields the Workspace settings page
  * owns (name/company name/slug/contact info). Logo upload is

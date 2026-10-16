@@ -18,11 +18,11 @@ export async function streamStorageObject(request: Request, storagePath: string,
   // as an attachment — i.e. handed over as a download without going through the download permission. Previews refuse
   // those; only a caller that has itself verified download rights may pass `allowNonInline`.
   if (!INLINE_TYPES.test(contentType ?? "") && !options.allowNonInline) {
-    return new Response(JSON.stringify({ error: "No preview is available for this file type." }), { status: 415, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ error: "No preview is available for this file type.", code: "UNSUPPORTED_MEDIA" }), { status: 415, headers: { "Content-Type": "application/json" } });
   }
   const object = adminStorage().file(storagePath);
   const [exists] = await object.exists();
-  if (!exists) return new Response(JSON.stringify({ error: "This file is no longer available." }), { status: 404, headers: { "Content-Type": "application/json" } });
+  if (!exists) return new Response(JSON.stringify({ error: "This file is no longer available.", code: "STORAGE_OBJECT_NOT_FOUND" }), { status: 404, headers: { "Content-Type": "application/json" } });
   const [metadata] = await object.getMetadata();
   const size = Number(metadata.size ?? 0);
 
@@ -48,7 +48,7 @@ export async function streamStorageObject(request: Request, storagePath: string,
       end = size - 1;
     }
     if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= size) {
-      return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
+      return new Response(JSON.stringify({ error: "That byte range can't be served.", code: "RANGE_ERROR" }), { status: 416, headers: { "Content-Range": `bytes */${size}`, "Content-Type": "application/json" } });
     }
     headers.set("Content-Range", `bytes ${start}-${end}/${size}`);
     headers.set("Content-Length", String(end - start + 1));

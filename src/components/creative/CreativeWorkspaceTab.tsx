@@ -17,6 +17,7 @@ import { ConfirmModal } from "@/components/shared/ConfirmModal";
 import { useFiles } from "@/hooks/useFiles";
 import { useStages } from "@/hooks/useStages";
 import { useFileActions } from "@/hooks/useFileActions";
+import * as fileService from "@/services/fileService";
 import { useStageActions } from "@/hooks/useStageActions";
 import { useProjectDetailsContext } from "@/contexts/ProjectDetailsContext";
 import { useToast } from "@/hooks/useToast";
@@ -69,6 +70,9 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
   const [isTemplateFormOpen, setIsTemplateFormOpen] = useState(false);
   const [queue, setQueue] = useState<UploadQueueItem[]>([]);
   const [archiveTarget, setArchiveTarget] = useState<Stage | null>(null);
+  // Deleting an UPLOADED asset (a wrong video, an accidental duplicate): every version of it, after confirmation.
+  const [deleteAssetTarget, setDeleteAssetTarget] = useState<AssetGroup | null>(null);
+  const [isDeletingAsset, setIsDeletingAsset] = useState(false);
   const [moveToStageId, setMoveToStageId] = useState<string>("");
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const migratedOrphansRef = useRef(false);
@@ -190,6 +194,26 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
         updateQueueItem(id, { status: "error", error: message });
         toast.error(`"${file.name}" failed to upload: ${message}`);
       }
+    }
+  }
+
+  async function confirmDeleteAsset() {
+    if (!deleteAssetTarget) return;
+    setIsDeletingAsset(true);
+    let deleted = 0;
+    try {
+      // Newest first, so if one version is refused (e.g. a teammate uploaded it) the asset is left in a sensible state.
+      for (const version of [...deleteAssetTarget.versions].sort((a, b) => (b.versionNumber ?? 1) - (a.versionNumber ?? 1))) {
+        await fileService.deleteProjectFile(version.workspaceId, version.id);
+        deleted++;
+      }
+      toast.success(deleted > 1 ? `Deleted "${deleteAssetTarget.latest.fileName}" and its ${deleted} versions` : `Deleted "${deleteAssetTarget.latest.fileName}"`);
+      setDeleteAssetTarget(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete this file. Please try again.");
+      if (deleted > 0) setDeleteAssetTarget(null);
+    } finally {
+      setIsDeletingAsset(false);
     }
   }
 
@@ -382,13 +406,13 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
                     ) : viewMode === "grid" ? (
                       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
                         {stageGroups.map((group) => (
-                          <AssetCard key={group.groupId} group={group} onClick={() => openAsset(group)} />
+                          <AssetCard key={group.groupId} group={group} onClick={() => openAsset(group)} onDelete={() => setDeleteAssetTarget(group)} />
                         ))}
                       </div>
                     ) : (
                       <div className="flex flex-col gap-2">
                         {stageGroups.map((group) => (
-                          <AssetListRow key={group.groupId} group={group} onClick={() => openAsset(group)} />
+                          <AssetListRow key={group.groupId} group={group} onClick={() => openAsset(group)} onDelete={() => setDeleteAssetTarget(group)} />
                         ))}
                       </div>
                     )}
@@ -402,6 +426,21 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
 
       <StageFormModal isOpen={isStageFormOpen} onClose={() => setIsStageFormOpen(false)} projectId={projectId} onCreated={setActiveStageId} />
       <StageFormModal isOpen={isTemplateFormOpen} onClose={() => setIsTemplateFormOpen(false)} projectId={projectId} startWithTemplates onCreated={setActiveStageId} />
+
+      <ConfirmModal
+        isOpen={Boolean(deleteAssetTarget)}
+        onClose={() => setDeleteAssetTarget(null)}
+        onConfirm={confirmDeleteAsset}
+        title="Delete this file?"
+        description={
+          deleteAssetTarget
+            ? `"${deleteAssetTarget.latest.fileName}"${deleteAssetTarget.versions.length > 1 ? ` and all ${deleteAssetTarget.versions.length} of its versions` : ""} will be permanently deleted along with comments, and any review links stop working. Storage space is given back. This can't be undone.`
+            : ""
+        }
+        confirmLabel="Delete permanently"
+        isDanger
+        isSubmitting={isDeletingAsset}
+      />
 
       <ConfirmModal
         isOpen={Boolean(archiveTarget)}

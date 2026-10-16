@@ -1,19 +1,31 @@
 "use client";
 
-import { Play } from "lucide-react";
+import { Play, Trash2 } from "lucide-react";
 import { FileTypeIcon } from "@/components/files/FileTypeIcon";
 import { AssetStatusBadge } from "./AssetStatusBadge";
 import { formatBytes } from "@/lib/utils/fileFormat";
 import { AssetGroup } from "@/lib/utils/assetVersions";
 
 /** One creative asset in the canvas grid — thumbnail (or type icon), name, version, status. Click navigates to the full-screen Creative Review Workspace. */
-export function AssetCard({ group, onClick }: { group: AssetGroup; onClick: () => void }) {
+export function AssetCard({ group, onClick, onDelete }: { group: AssetGroup; onClick: () => void; onDelete?: () => void }) {
   const asset = group.latest;
 
   return (
+    <div className="group/card relative">
+    {onDelete && (
+      <button
+        type="button"
+        onClick={onDelete}
+        aria-label={`Delete ${asset.fileName}`}
+        title="Delete"
+        className="absolute left-1.5 top-1.5 z-10 rounded-full bg-black/60 p-1.5 text-white opacity-100 transition-opacity hover:bg-error sm:opacity-0 sm:group-hover/card:opacity-100 sm:focus:opacity-100"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </button>
+    )}
     <button
       onClick={onClick}
-      className="group flex flex-col overflow-hidden rounded-theme border border-border bg-surface text-left shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-soft-lg"
+      className="group flex w-full flex-col overflow-hidden rounded-theme border border-border bg-surface text-left shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-soft-lg"
     >
       <div className="relative flex aspect-video items-center justify-center bg-surface-muted">
         {asset.thumbnailUrl ? (
@@ -42,5 +54,6 @@ export function AssetCard({ group, onClick }: { group: AssetGroup; onClick: () =
         </div>
       </div>
     </button>
+    </div>
   );
 }

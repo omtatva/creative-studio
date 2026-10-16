@@ -67,6 +67,14 @@ export async function POST(request: NextRequest) {
   const memberSnapshot = await adminDb().collection("members").where("workspaceId", "==", workspaceId).get();
   for (const memberDocSnap of memberSnapshot.docs) {
     await memberDocSnap.ref.delete();
+    // Don't leave the (now ex-)member pointing at a workspace that no longer exists — that stale pointer is what produced the
+    // dead-end "Couldn't load your workspace" screen on their next sign-in. Only cleared when it still points HERE.
+    const memberUid = memberDocSnap.data().userId as string | undefined;
+    if (memberUid) {
+      const userRef = adminDb().collection("users").doc(memberUid);
+      const u = await userRef.get();
+      if (u.exists && u.data()?.activeWorkspaceId === workspaceId) await userRef.update({ activeWorkspaceId: null });
+    }
   }
   await adminDb().collection("settings").doc(workspaceId).delete();
   await workspaceRef.delete();

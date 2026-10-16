@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Archive, Download, MoreHorizontal, Upload } from "lucide-react";
+import { Archive, Download, MoreHorizontal, Trash2, Upload } from "lucide-react";
 import { FileTypeIcon } from "@/components/files/FileTypeIcon";
 import { AssetStatusBadge } from "@/components/creative/AssetStatusBadge";
 import { formatBytes } from "@/lib/utils/fileFormat";
@@ -17,10 +17,11 @@ interface FileInfoBarProps {
   onUploadVersion: () => void;
   onDownload: () => void;
   onArchive: () => void;
+  onDelete: () => void;
 }
 
 /** Compact bottom status strip — thumbnail + file metadata + quick actions, distinct from the video's own transport controls above it. */
-export function FileInfoBar({ asset, versionCount, stageName, onUploadVersion, onDownload, onArchive }: FileInfoBarProps) {
+export function FileInfoBar({ asset, versionCount, stageName, onUploadVersion, onDownload, onArchive, onDelete }: FileInfoBarProps) {
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const moreRef = useDismissableMenu<HTMLDivElement>(isMoreOpen, () => setIsMoreOpen(false));
 
@@ -71,7 +72,7 @@ export function FileInfoBar({ asset, versionCount, stageName, onUploadVersion, o
             <MoreHorizontal className="h-4 w-4" />
           </button>
           {isMoreOpen && (
-            <div className="absolute bottom-full right-0 z-10 mb-1 w-40 rounded-theme border border-border bg-surface py-1 shadow-soft-lg">
+            <div className="absolute bottom-full right-0 z-10 mb-1 w-48 rounded-theme border border-border bg-surface py-1 shadow-soft-lg">
               <button
                 onClick={() => {
                   setIsMoreOpen(false);
@@ -80,6 +81,15 @@ export function FileInfoBar({ asset, versionCount, stageName, onUploadVersion, o
                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground-muted hover:bg-error/10 hover:text-error"
               >
                 <Archive className="h-4 w-4" /> Archive
+              </button>
+              <button
+                onClick={() => {
+                  setIsMoreOpen(false);
+                  onDelete();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-error hover:bg-error/10"
+              >
+                <Trash2 className="h-4 w-4" /> {versionCount > 1 ? "Delete this version" : "Delete"}
               </button>
             </div>
           )}

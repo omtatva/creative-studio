@@ -11,6 +11,15 @@ export interface ComparePreviewSide {
   durationSeconds: number | null;
 }
 
+/** A preview failure that keeps the server's machine-readable step code (see /api/files/preview) for diagnostics. */
+export class PreviewError extends Error {
+  code: string;
+  constructor(message: string, code: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
 /** Media URL for a preview ticket — served by /api/files/preview, which re-checks project access on every request. */
 export const previewUrl = (ticket: string) => `/api/files/preview?t=${encodeURIComponent(ticket)}`;
 
@@ -25,7 +34,8 @@ export async function createPreviewTicket(workspaceId: string, fileId: string): 
     body: JSON.stringify({ workspaceId, fileId }),
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data?.error ?? "Couldn't load the preview.");
+  // No JSON body at all means the server itself crashed (an HTML error page), not that access was refused.
+  if (!response.ok) throw new PreviewError(data?.error ?? "Couldn't load the preview.", data?.code ?? `HTTP_${response.status}`);
   return data;
 }
 

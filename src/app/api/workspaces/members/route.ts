@@ -94,6 +94,10 @@ export async function POST(request: NextRequest) {
     summary = `${body.disabled ? "disabled" : "re-enabled"} ${member.displayName ?? "a member"}`;
   } else {
     await memberRef.delete();
+    // The removed person's active-workspace pointer would otherwise keep pointing at a workspace they can no longer read.
+    const removedUser = adminDb().collection("users").doc(uid);
+    const removedSnap = await removedUser.get();
+    if (removedSnap.exists && removedSnap.data()?.activeWorkspaceId === workspaceId) await removedUser.update({ activeWorkspaceId: null });
     summary = `removed ${member.displayName ?? "a member"} from the workspace`;
     // Removal frees a member slot — recompute from the real aggregate
     // (never a blind decrement; see workspaceQuota.ts). Best-effort: the

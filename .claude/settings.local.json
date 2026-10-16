@@ -4,7 +4,19 @@
       "Bash(npx tsc *)",
       "Bash(tee /tmp/tscout.txt)",
       "Bash(node run7.ts)",
-      "Bash(node quota.cjs)"
+      "Bash(node quota.cjs)",
+      "Bash(node e2e.cjs)",
+      "Bash(node owners.cjs)",
+      "Bash(netstat -ano)",
+      "Bash(node \"C:/Users/Radhika/AppData/Local/Temp/claude/p91.cjs\")",
+      "Bash(node e2e3.cjs)",
+      "Bash(node \"C:/Users/Radhika/AppData/Local/Temp/claude/p92.cjs\")",
+      "Bash(node \"C:/Users/Radhika/AppData/Local/Temp/claude/p93.cjs\")",
+      "Bash(node \"C:/Users/Radhika/AppData/Local/Temp/claude/p94.cjs\")",
+      "Bash(sed -i 's/\\\\[store\\\\[\"settings\"\\\\]\\\\[\"W1\"\\\\].storage.usedBytes, calls.resync/[store[\"settings\"][\"W1\"].storage.usedBytes.__inc ?? store[\"settings\"][\"W1\"].storage.usedBytes, calls.resync/; s/\\\\[160, true\\\\]\\);/[-300, true]\\);/' run9.ts)",
+      "Bash(node run9.ts)",
+      "Bash(npx next *)",
+      "Bash(node \"C:/Users/Radhika/AppData/Local/Temp/claude/p95.cjs\")"
     ]
   }
 }

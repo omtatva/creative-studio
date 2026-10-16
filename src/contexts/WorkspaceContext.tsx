@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getDocs } from "firebase/firestore";
 import { useAuthContext } from "./AuthContext";
-import { getWorkspace, setActiveWorkspace } from "@/services/workspaceService";
+import { clearActiveWorkspace, getWorkspace, setActiveWorkspace } from "@/services/workspaceService";
 import { resyncBillingCache } from "@/services/billingService";
 import { getUserWorkspaceMemberships } from "@/services/userService";
 import { workspacesCol } from "@/lib/firebase/firestore";
@@ -77,6 +77,43 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (fresh) setWorkspace((prev) => (prev && prev.id === fresh.id ? fresh : prev));
   }
 
+  // Pointers already repaired this session (guards against a loop if the repair itself can't stick).
+  const healedPointers = useRef<Set<string>>(new Set());
+
+  /**
+   * `users/{uid}.activeWorkspaceId` can be STALE: deleting a workspace removes its members/settings/workspace docs but never the
+   * other members' pointers, and removing a member doesn't clear theirs either. Reading a workspace you are not (or no longer) a
+   * member of is a Firestore permission-denied — NOT "not found" — so such an account used to land on a dead-end "Couldn't load
+   * your workspace" screen on every sign-in (a first-time user with an invite to a since-deleted workspace, for example).
+   * Recovery: switch to another workspace the user really belongs to, else clear the pointer so they get the normal
+   * "no workspace yet" experience (create one / accept an invite). Only for permission-denied / missing docs — a network
+   * error still shows the retry screen. Returns true when the pointer was repaired (the profile change reloads everything).
+   */
+  async function repairStalePointer(staleId: string): Promise<boolean> {
+    if (!firebaseUser || healedPointers.current.has(staleId)) return false;
+    healedPointers.current.add(staleId);
+    try {
+      const memberships = await getUserWorkspaceMemberships(firebaseUser.uid);
+      for (const m of memberships) {
+        if (m.workspaceId === staleId) continue;
+        const ws = await getWorkspace(m.workspaceId).catch(() => null);
+        if (ws) {
+          await setActiveWorkspace(firebaseUser.uid, ws.id);
+          await refreshProfile();
+          return true;
+        }
+      }
+      await clearActiveWorkspace(firebaseUser.uid);
+      await refreshProfile();
+      setWorkspace(null);
+      setError(null);
+      return true;
+    } catch (err) {
+      console.error("[WorkspaceContext] couldn't repair a stale active workspace pointer:", err);
+      return false;
+    }
+  }
+
   async function load(workspaceId: string) {
     try {
       const ws = await getWorkspace(workspaceId);
@@ -96,8 +133,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           // reads the `workspaces` list, never this `workspace`.
           return;
         }
-        // The doc doesn't exist (deleted, or activeWorkspaceId is stale) —
-        // this is a real, actionable state, not a transient loading gap.
+        // The doc doesn't exist (deleted, or activeWorkspaceId is stale): repair the pointer instead of trapping the account.
+        if (await repairStalePointer(workspaceId)) return;
         console.error("[WorkspaceContext] workspace document not found:", workspaceId);
         setError(`Workspace "${workspaceId}" was not found. It may have been deleted, or your account is pointing at an invalid workspace.`);
       }
@@ -107,6 +144,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       // workspaceId) silently stayed null forever with zero visible
       // error anywhere in the app.
       const firebaseErr = err as { code?: string; message?: string; stack?: string };
+      // permission-denied on the active workspace = not (or no longer) a member of it = a stale pointer (see repairStalePointer).
+      if (firebaseErr?.code === "permission-denied" && !isSuperAdminUser(profile) && (await repairStalePointer(workspaceId))) return;
       console.error("[WorkspaceContext] failed to load workspace:", err);
       console.error("[WorkspaceContext] error.code:", firebaseErr?.code);
       console.error("[WorkspaceContext] error.message:", firebaseErr?.message);

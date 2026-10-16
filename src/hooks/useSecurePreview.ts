@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createPreviewTicket, previewUrl } from "@/services/compareService";
+import { createPreviewTicket, previewUrl, PreviewError } from "@/services/compareService";
 
 export interface SecurePreview {
   /** Same-origin, ticketed media URL — null until issued (or if it was refused). Never the permanent Firebase token URL. */
@@ -41,7 +41,12 @@ export function useSecurePreview(file: { id: string; workspaceId: string } | nul
         const refreshIn = Math.max(60_000, expiresAtMs - Date.now() - 5 * 60_000);
         timer = setTimeout(issue, refreshIn);
       } catch (err) {
-        if (!cancelled) setState({ url: null, isLoading: false, error: err instanceof Error ? err.message : "Couldn't load the preview." });
+        if (cancelled) return;
+        const code = err instanceof PreviewError ? err.code : "TICKET_CREATE_FAILED";
+        const message = err instanceof Error ? err.message : "Couldn't load the preview.";
+        // The friendly message stays; in development the failing STEP is shown too (never a token, ticket or URL). The page never falls back to the permanent file URL.
+        if (process.env.NODE_ENV !== "production") console.warn(`[useSecurePreview] ${code}: ${message}`);
+        setState({ url: null, isLoading: false, error: process.env.NODE_ENV !== "production" ? `${message} (${code})` : message });
       }
     };
 
