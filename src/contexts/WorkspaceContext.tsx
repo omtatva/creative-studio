@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getDocs } from "firebase/firestore";
 import { useAuthContext } from "./AuthContext";
-import { clearActiveWorkspace, getWorkspace, setActiveWorkspace } from "@/services/workspaceService";
+import { clearActiveWorkspace, getWorkspace, markOnboardingComplete, setActiveWorkspace } from "@/services/workspaceService";
 import { resyncBillingCache } from "@/services/billingService";
 import { getUserWorkspaceMemberships } from "@/services/userService";
 import { workspacesCol } from "@/lib/firebase/firestore";
@@ -120,6 +120,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setWorkspace(ws);
       setError(null);
       if (ws) void resolveBillingCache(ws.id);
+      // A workspace the user is really a member of just loaded => they are onboarded (fixes accounts stuck as "Pending" in Super Admin > Users).
+      if (ws && firebaseUser && profile && profile.onboardingComplete === false) {
+        markOnboardingComplete(firebaseUser.uid).then(() => refreshProfile()).catch((err) => console.error("[WorkspaceContext] couldn't mark onboarding complete (non-fatal):", err));
+      }
       if (!ws) {
         if (isSuperAdminUser(profile)) {
           // Super Admin (itSupport.ts) is a platform-wide admin identity,

@@ -354,6 +354,15 @@ export async function setActiveWorkspace(uid: string, workspaceId: string): Prom
   await setDoc(userDoc(uid), { activeWorkspaceId: workspaceId, updatedAt: serverTimestamp() } as never, { merge: true });
 }
 
+/**
+ * Marks the account onboarded. Super Admin > Users shows "Pending" until this is true; it was only ever set when an invite was accepted
+ * through the server route or a workspace was created, so people who joined through an older path (or whose workspace later loaded
+ * fine) stayed "Pending" forever. Called once a workspace the user is really a member of has loaded.
+ */
+export async function markOnboardingComplete(uid: string): Promise<void> {
+  await setDoc(userDoc(uid), { onboardingComplete: true, updatedAt: serverTimestamp() } as never, { merge: true });
+}
+
 /** Clears a STALE active-workspace pointer (the workspace was deleted, or the user was removed from it) so the account lands in the normal "no workspace yet" state instead of an error screen. */
 export async function clearActiveWorkspace(uid: string): Promise<void> {
   await setDoc(userDoc(uid), { activeWorkspaceId: null, updatedAt: serverTimestamp() } as never, { merge: true });

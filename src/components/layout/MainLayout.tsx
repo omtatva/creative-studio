@@ -3,6 +3,7 @@
 import { type ReactNode } from "react";
 import Link from "next/link";
 import { Sidebar } from "./Sidebar";
+import { PendingInviteNotice } from "@/components/workspace/PendingInviteNotice";
 import { ProjectAppearanceApplier } from "./ProjectAppearanceApplier";
 import { SuperAdminViewingBanner } from "./SuperAdminViewingBanner";
 import { Navbar } from "./Navbar";
@@ -104,7 +105,10 @@ export function MainLayout({ children }: { children: ReactNode }) {
           <div className="flex min-h-screen flex-1 flex-col">
             <Navbar />
             <SuperAdminViewingBanner />
-            <main className="flex-1 p-4 md:p-6 lg:p-8">{children}</main>
+            <main className="flex-1 p-4 md:p-6 lg:p-8">
+              <PendingInviteNotice />
+              {children}
+            </main>
           </div>
         </div>
       )}

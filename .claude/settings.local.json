@@ -16,7 +16,10 @@
       "Bash(sed -i 's/\\\\[store\\\\[\"settings\"\\\\]\\\\[\"W1\"\\\\].storage.usedBytes, calls.resync/[store[\"settings\"][\"W1\"].storage.usedBytes.__inc ?? store[\"settings\"][\"W1\"].storage.usedBytes, calls.resync/; s/\\\\[160, true\\\\]\\);/[-300, true]\\);/' run9.ts)",
       "Bash(node run9.ts)",
       "Bash(npx next *)",
-      "Bash(node \"C:/Users/Radhika/AppData/Local/Temp/claude/p95.cjs\")"
+      "Bash(node \"C:/Users/Radhika/AppData/Local/Temp/claude/p95.cjs\")",
+      "Bash(node pending.cjs)",
+      "Bash(node -e ' *)",
+      "Bash(node \"C:/Users/Radhika/AppData/Local/Temp/claude/p96.cjs\")"
     ]
   }
 }
