@@ -4,7 +4,7 @@ import { verifyRequestAuth, AuthVerificationError, adminDb, adminStorage } from 
 import { reserveStorageBytes, resyncSlotCount, WorkspaceQuotaError } from "@/lib/server/workspaceQuota";
 import { isFeatureAllowed, featureDisabledBody } from "@/lib/server/featureAccess";
 import type { MemberRole } from "@/types/workspace.types";
-import { assetTypeFromContentType } from "@/lib/constants/creativeFiles";
+import { assetTypeFromContentType, effectiveMaxFileBytes, formatFileLimit } from "@/lib/constants/creativeFiles";
 import { DEFAULT_ASSET_STATUS_ID } from "@/lib/constants/assetOptions";
 
 export const runtime = "nodejs";
@@ -172,6 +172,23 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     console.error("[files/finalize] couldn't read uploaded object metadata:", err);
     return NextResponse.json({ error: "Couldn't find the uploaded file. Try uploading again." }, { status: 404 });
+  }
+
+  // The workspace owner/admin's per-file limit (Settings > Storage), capped by the platform ceiling — checked against the REAL object size,
+  // so a modified browser can't skip it. A too-large object is removed, exactly like an over-quota one below.
+  try {
+    const settingsSnap = await adminDb().collection("settings").doc(workspaceId).get();
+    const maxFileBytes = effectiveMaxFileBytes(settingsSnap.data()?.storage?.maxFileSizeMb as number | null | undefined);
+    if (realSizeBytes > maxFileBytes) {
+      await adminStorage().file(storagePath).delete({ ignoreNotFound: true }).catch((deleteErr) => console.error("[files/finalize] failed to delete over-limit upload:", deleteErr));
+      return NextResponse.json(
+        { error: `This file is ${formatFileLimit(realSizeBytes)}, over this workspace's per-file limit of ${formatFileLimit(maxFileBytes)}. An owner or admin can change it in Settings > Storage.`, code: "FILE_TOO_LARGE" },
+        { status: 413 }
+      );
+    }
+  } catch (limitErr) {
+    // The per-file limit is a workspace preference; the plan's storage quota below remains the hard cap. A read failure is logged, never silent.
+    console.error("[files/finalize] couldn't read the per-file limit setting — applying the platform ceiling only:", limitErr);
   }
 
   try {
