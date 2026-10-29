@@ -51,7 +51,10 @@
       "Bash(node deployed_rules.cjs)",
       "Bash(node invite_unverified.cjs)",
       "Bash(node idor.cjs)",
-      "Bash(grep -rnE \"\\(\\\\?|&\\)\\(idToken|token|access_token\\)=\\\\\\\\$\\\\{\" src --include=*.ts --include=*.tsx)"
+      "Bash(grep -rnE \"\\(\\\\?|&\\)\\(idToken|token|access_token\\)=\\\\\\\\$\\\\{\" src --include=*.ts --include=*.tsx)",
+      "Bash(git diff *)",
+      "Bash(grep -vE \"^\\\\+\\\\s*\\(\\\\*|/\\\\*\\\\*|//\\)\")",
+      "Bash(node -e *)"
     ]
   }
 }
