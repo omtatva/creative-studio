@@ -23,6 +23,7 @@ import { useProjectDetailsContext } from "@/contexts/ProjectDetailsContext";
 import { useToast } from "@/hooks/useToast";
 import { groupAssetVersions, type AssetGroup } from "@/lib/utils/assetVersions";
 import { useFeatureAccess } from "@/hooks/useFeatureAccess";
+import { useUploadLimit } from "@/hooks/useUploadLimit";
 import { getUploadValidationError, ACCEPTED_FILE_INPUT } from "@/lib/constants/creativeFiles";
 import { fileReviewRoute } from "@/lib/constants/routes";
 import { cn } from "@/lib/utils/cn";
@@ -56,6 +57,7 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
   const { files, isLoading: isLoadingFiles } = useFiles(projectId);
   const { stages, isLoading: isLoadingStages } = useStages(projectId);
   const fileActions = useFileActions();
+  const maxFileBytes = useUploadLimit();
   const stageActions = useStageActions();
   const toast = useToast();
   const { can } = useFeatureAccess();
@@ -164,7 +166,7 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
     for (const file of fileList) {
       const id = crypto.randomUUID();
 
-      const validationError = getUploadValidationError(file);
+      const validationError = getUploadValidationError(file, maxFileBytes);
       if (validationError) {
         setQueue((prev) => [...prev, { id, file, status: "error", progress: 0, error: validationError }]);
         toast.error(validationError);

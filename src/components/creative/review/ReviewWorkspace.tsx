@@ -29,6 +29,7 @@ import { FileTypeIcon } from "@/components/files/FileTypeIcon";
 import { useFileComments } from "@/hooks/useFileComments";
 import { useFileAnnotations } from "@/hooks/useFileAnnotations";
 import { useFileActions } from "@/hooks/useFileActions";
+import { useUploadLimit } from "@/hooks/useUploadLimit";
 import * as fileService from "@/services/fileService";
 import { useAssetOptions } from "@/hooks/useAssetOptions";
 import { useReviews } from "@/hooks/useReviews";
@@ -110,6 +111,7 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
   const { stages } = useStages(projectId);
   const { canApproveReviews } = useCurrentMemberRole();
   const fileActions = useFileActions();
+  const maxFileBytes = useUploadLimit();
   const reviewActions = useReviewActions();
   const { options: assetOptions, getStatus, saveStatuses } = useAssetOptions();
 
@@ -213,7 +215,7 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
 
   async function handleUploadVersion(file: File | null) {
     if (!file) return;
-    const validationError = getUploadValidationError(file);
+    const validationError = getUploadValidationError(file, maxFileBytes);
     if (validationError) {
       toast.error(validationError);
       return;

@@ -36,8 +36,28 @@ export const SUPPORTED_CREATIVE_EXTENSIONS: Record<string, AssetType> = {
 
 export const ACCEPTED_FILE_INPUT = ".mp4,.mov,.webm,.jpg,.jpeg,.png,.svg,.gif,.pdf,.mp3,.wav";
 
-/** Per-file ceiling for creative assets (mirrored by firebase-config/storage.rules). Uploads are resumable and streamed from the File, never buffered in memory. The WORKSPACE's total storage is a separate, plan-based limit. */
-export const MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB
+export const MB = 1024 * 1024;
+export const GB = 1024 * MB;
+
+/**
+ * PLATFORM ceiling for ONE file (mirrored by firebase-config/storage.rules, which can't read per-workspace settings). It is the most any
+ * workspace can ever allow; each workspace's owner/admin can set a LOWER per-file limit in Settings > Storage (`storage.maxFileSizeMb`),
+ * and a workspace's TOTAL storage is separately capped by its plan. Effective per-file limit = min(owner's setting, this ceiling),
+ * and an upload still has to fit in the plan's remaining storage. Uploads are resumable and streamed from the File, never buffered.
+ */
+export const MAX_UPLOAD_SIZE_BYTES = 100 * GB;
+
+/** The per-file limit that applies to a workspace: the owner's setting when set (1 MB .. ceiling), else the platform ceiling. */
+export function effectiveMaxFileBytes(maxFileSizeMb: number | null | undefined): number {
+  if (typeof maxFileSizeMb === "number" && Number.isFinite(maxFileSizeMb) && maxFileSizeMb > 0) return Math.min(Math.round(maxFileSizeMb) * MB, MAX_UPLOAD_SIZE_BYTES);
+  return MAX_UPLOAD_SIZE_BYTES;
+}
+
+/** "100 GB", "1.5 GB", "250 MB". */
+export function formatFileLimit(bytes: number): string {
+  if (bytes >= GB) return `${Number((bytes / GB).toFixed(2))} GB`;
+  return `${Number((bytes / MB).toFixed(1))} MB`;
+}
 
 function extensionOf(fileName: string): string {
   return fileName.split(".").pop()?.toLowerCase() ?? "";
@@ -49,9 +69,10 @@ export function isSupportedCreativeFile(file: File): boolean {
 }
 
 /** Single validation entry point for every upload path (initial upload, new version) — returns a user-facing message, or null if the file is fine. */
-export function getUploadValidationError(file: File): string | null {
+export function getUploadValidationError(file: File, maxBytes: number = MAX_UPLOAD_SIZE_BYTES): string | null {
   if (!isSupportedCreativeFile(file)) return `"${file.name}" isn't a supported creative file type.`;
-  if (file.size > MAX_UPLOAD_SIZE_BYTES) return `"${file.name}" is too large (max ${MAX_UPLOAD_SIZE_BYTES / (1024 * 1024 * 1024)} GB).`;
+  const limit = Math.min(maxBytes, MAX_UPLOAD_SIZE_BYTES);
+  if (file.size > limit) return `"${file.name}" is too large — this workspace allows files up to ${formatFileLimit(limit)}.`;
   return null;
 }
 

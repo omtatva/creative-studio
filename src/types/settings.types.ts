@@ -155,7 +155,10 @@ export interface SecuritySettings {
 export interface StorageSettings {
   usedBytes: number;
   limitBytes: number;
+  /** LEGACY, never enforced — superseded by maxFileSizeMb. Kept so existing documents still type-check. */
   maxUploadSizeMb: number;
+  /** Per-FILE size limit chosen by the workspace owner/admin (MB). null/absent = no workspace limit (the platform ceiling applies). Enforced in the browser AND by /api/files/finalize. The plan separately caps TOTAL storage. */
+  maxFileSizeMb?: number | null;
   allowedFileTypes: string[]; // extensions, e.g. "png", "pdf"
 }
 
