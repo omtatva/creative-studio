@@ -29,7 +29,7 @@ export type SecuritySettingsFormValues = z.infer<typeof securitySettingsSchema>;
 
 /** Storage — max upload size + allowed extensions. */
 export const storageSettingsSchema = z.object({
-  maxUploadSizeMb: z.number().min(1, "At least 1 MB").max(10240, "At most 10240 MB (10 GB)"),
+  maxUploadSizeMb: z.number().min(1, "At least 1 MB").max(102400, "At most 102400 MB (100 GB)"),
   allowedFileTypesText: z.string().min(1, "List at least one file type"),
 });
 export type StorageSettingsFormValues = z.infer<typeof storageSettingsSchema>;
