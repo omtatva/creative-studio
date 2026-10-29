@@ -37,7 +37,7 @@ export const SUPPORTED_CREATIVE_EXTENSIONS: Record<string, AssetType> = {
 export const ACCEPTED_FILE_INPUT = ".mp4,.mov,.webm,.jpg,.jpeg,.png,.svg,.gif,.pdf,.mp3,.wav";
 
 /** Per-file ceiling for creative assets (mirrored by firebase-config/storage.rules). Uploads are resumable and streamed from the File, never buffered in memory. The WORKSPACE's total storage is a separate, plan-based limit. */
-export const MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB
+export const MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024 * 1024; // 100 GB
 
 function extensionOf(fileName: string): string {
   return fileName.split(".").pop()?.toLowerCase() ?? "";
