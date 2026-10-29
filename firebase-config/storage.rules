@@ -203,7 +203,7 @@ service firebase.storage {
           || request.resource.contentType == 'application/octet-stream'
           || request.resource.contentType == ''
         )
-        && request.resource.size < 100 * 1024 * 1024 * 1024; // 100 GB — mirrors MAX_UPLOAD_SIZE_BYTES
+        && request.resource.size <= 100 * 1024 * 1024 * 1024; // 100 GB — mirrors MAX_UPLOAD_SIZE_BYTES
     }
 
     // Task attachments have no established client-side type allow-list
@@ -219,7 +219,7 @@ service firebase.storage {
           'application/x-msi', 'application/vnd.microsoft.portable-executable',
           'application/java-archive', 'application/x-elf'
         ])
-        && request.resource.size < 500 * 1024 * 1024;
+        && request.resource.size <= 500 * 1024 * 1024;
     }
 
     match /workspaces/{workspaceId}/branding/{allPaths=**} {
