@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { getDocs } from "firebase/firestore";
+import { onSnapshot } from "firebase/firestore";
 import { useAuthContext } from "./AuthContext";
 import { clearActiveWorkspace, getWorkspace, markOnboardingComplete, setActiveWorkspace } from "@/services/workspaceService";
 import { resyncBillingCache } from "@/services/billingService";
@@ -45,6 +45,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const { firebaseUser, profile, refreshProfile } = useAuthContext();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  // False until the workspace LIST (not just the active workspace) has been resolved for the current identity.
+  const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSwitching, setIsSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -163,25 +165,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function loadMemberships(uid: string) {
+  /** The workspaces this (non-Super-Admin) user belongs to. `isCurrent` lets the caller discard a result that arrives after the identity changed. */
+  async function loadMemberships(uid: string, isCurrent: () => boolean) {
     try {
-      // Super Admin (see lib/constants/itSupport.ts) gets every
-      // workspace, not just ones they hold a `members` doc for —
-      // matches firestore.rules' isSuperAdmin() bypass on the
-      // `workspaces` collection's read rule. Everyone else keeps the
-      // exact existing behavior: only workspaces they actually belong
-      // to.
-      if (isSuperAdminUser(profile)) {
-        const snapshot = await getDocs(workspacesCol());
-        setWorkspaces(snapshot.docs.map((d) => d.data()));
-        return;
-      }
       const memberships = await getUserWorkspaceMemberships(uid);
       const results = await Promise.all(memberships.map((m) => getWorkspace(m.workspaceId)));
-      setWorkspaces(results.filter((w): w is Workspace => w !== null));
+      if (isCurrent()) setWorkspaces(results.filter((w): w is Workspace => w !== null));
     } catch (err) {
       console.error("[WorkspaceContext] failed to load workspace memberships:", err);
       // Non-fatal — the switcher just shows only the active workspace if this fails.
+    } finally {
+      if (isCurrent()) setWorkspacesLoaded(true);
     }
   }
 
@@ -196,22 +190,57 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
   }, [profile?.activeWorkspaceId]);
 
+  const isSuperAdmin = isSuperAdminUser(profile);
+  const firebaseUid = firebaseUser?.uid ?? null;
+
   useEffect(() => {
-    if (firebaseUser) {
-      loadMemberships(firebaseUser.uid);
-    } else {
+    if (!firebaseUid) {
       setWorkspaces([]);
+      setWorkspacesLoaded(false);
+      return;
     }
-    // Re-run whenever the active workspace changes too, so a newly
-    // created workspace shows up in the switcher immediately.
-  }, [firebaseUser, profile?.activeWorkspaceId]);
+    setWorkspacesLoaded(false);
+    let current = true;
+    const isCurrent = () => current;
+
+    if (isSuperAdmin) {
+      // Super Admin (see lib/constants/itSupport.ts) sees EVERY workspace, live — matches firestore.rules' isSuperAdmin() bypass on the
+      // `workspaces` read rule. A realtime subscription (not a one-time read) is what makes a newly created workspace appear without a
+      // refresh. This effect depends on `isSuperAdmin`: previously it did not, so whether the list was "all workspaces" or only "the ones
+      // I'm a member of" depended on whether the profile (which carries platformRole) had loaded yet when the page did — which is why a
+      // refresh could show 2 workspaces one time and 5 the next.
+      const unsubscribe = onSnapshot(
+        workspacesCol(),
+        (snapshot) => {
+          if (!current) return;
+          setWorkspaces(snapshot.docs.map((d) => d.data()));
+          setWorkspacesLoaded(true);
+        },
+        (err) => {
+          console.error("[WorkspaceContext] workspace list subscription failed:", err);
+          if (current) setWorkspacesLoaded(true);
+        }
+      );
+      return () => {
+        current = false;
+        unsubscribe();
+      };
+    }
+
+    // Everyone else: only workspaces they actually belong to. Re-run when the active workspace changes so a newly created workspace shows up.
+    void loadMemberships(firebaseUid, isCurrent);
+    return () => {
+      current = false;
+    };
+  }, [firebaseUid, profile?.activeWorkspaceId, isSuperAdmin]);
 
   const value = useMemo<WorkspaceContextValue>(
     () => ({
       workspace,
       workspaceId: workspace?.id ?? null,
       workspaces,
-      isLoading,
+      // For the Super Admin, "loading" also covers the workspace LIST, so Customers/Billing pages don't flash an empty list.
+      isLoading: isLoading || (isSuperAdmin && !workspacesLoaded),
       isSwitching,
       error,
       refreshWorkspace: async () => {
@@ -233,7 +262,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         }
       },
     }),
-    [workspace, workspaces, isLoading, isSwitching, error, profile?.activeWorkspaceId, firebaseUser, refreshProfile]
+    [workspace, workspaces, isLoading, isSuperAdmin, workspacesLoaded, isSwitching, error, profile?.activeWorkspaceId, firebaseUser, refreshProfile]
   );
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

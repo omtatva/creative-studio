@@ -54,7 +54,8 @@
       "Bash(grep -rnE \"\\(\\\\?|&\\)\\(idToken|token|access_token\\)=\\\\\\\\$\\\\{\" src --include=*.ts --include=*.tsx)",
       "Bash(git diff *)",
       "Bash(grep -vE \"^\\\\+\\\\s*\\(\\\\*|/\\\\*\\\\*|//\\)\")",
-      "Bash(node -e *)"
+      "Bash(node -e *)",
+      "Bash(node \"C:/Users/Radhika/AppData/Local/Temp/claude/p110.cjs\")"
     ]
   }
 }
