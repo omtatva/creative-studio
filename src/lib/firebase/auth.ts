@@ -25,7 +25,23 @@ export function subscribeToAuthChanges(callback: (user: User | null) => void): U
 export async function signUpWithEmail(email: string, password: string, displayName: string) {
   const credential = await createUserWithEmailAndPassword(auth, email, password);
   await updateProfile(credential.user, { displayName });
+  // Email/password accounts start UNVERIFIED, and joining a workspace by invitation requires a verified address (enforced on the server). Send the
+  // verification email now. Best-effort: a failed send must never fail the signup itself — the invite page offers "Resend" and "Check again".
+  await sendEmailVerification(credential.user).catch((err) => console.error("[auth] couldn't send the verification email at signup:", (err as { code?: string })?.code ?? err));
   return credential.user;
+}
+
+/**
+ * Re-reads the signed-in user from Firebase (user.reload()) and forces a fresh ID token, then reports whether the address is NOW verified. Call it after the person
+ * clicks the link in their email: the SDK's cached user (and the token's email_verified claim) can stay stale for up to an hour otherwise.
+ * This only decides which screen to show — the server independently re-verifies before accepting an invitation.
+ */
+export async function refreshEmailVerified(): Promise<boolean> {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not signed in.");
+  await user.reload();
+  await user.getIdToken(true);
+  return auth.currentUser?.emailVerified === true;
 }
 
 export async function signInWithEmail(email: string, password: string) {

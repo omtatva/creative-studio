@@ -3,13 +3,15 @@
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Clock, Mail, XCircle } from "lucide-react";
+import { BadgeCheck, Clock, Mail, MailWarning, RefreshCw, XCircle } from "lucide-react";
 import { AuthLayout } from "@/components/auth/AuthLayout";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Loader } from "@/components/ui/Loader";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/useToast";
+import { useEmailVerification } from "@/hooks/useEmailVerification";
+import { classifyAcceptFailure } from "@/lib/auth/emailVerification";
 import { getInviteById, acceptInvite } from "@/services/inviteService";
 import { setActiveWorkspace } from "@/services/workspaceService";
 import { WorkspaceInvite } from "@/types/workspace.types";
@@ -36,6 +38,7 @@ export default function AcceptInvitePage({ params }: { params: Promise<{ inviteI
   const { firebaseUser, profile, isLoading: isAuthLoading, refreshProfile } = useAuthContext();
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [isAccepting, setIsAccepting] = useState(false);
+  const verification = useEmailVerification();
 
   useEffect(() => {
     if (isAuthLoading || !firebaseUser) return;
@@ -75,7 +78,7 @@ export default function AcceptInvitePage({ params }: { params: Promise<{ inviteI
   }, [inviteId, isAuthLoading, firebaseUser]);
 
   async function handleAccept(invite: WorkspaceInvite) {
-    if (!firebaseUser) return;
+    if (!firebaseUser || isAccepting) return; // a double click must not send two requests
     setIsAccepting(true);
     try {
       const actor = {
@@ -90,7 +93,22 @@ export default function AcceptInvitePage({ params }: { params: Promise<{ inviteI
       toast.success(`You've joined ${invite.workspaceName}`);
       router.push(ROUTES.dashboard);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't accept this invite. Please try again.");
+      const failure = classifyAcceptFailure((err as { code?: string })?.code, (err as { status?: number })?.status);
+      const message = err instanceof Error ? err.message : "Couldn't accept this invite. Please try again.";
+      if (failure === "email_not_verified") {
+        // The SERVER decided (it re-reads the Firebase Auth record) — its answer wins over whatever this browser had cached.
+        verification.markUnverified();
+      } else if (failure === "already_used") {
+        setState({ status: "error", message: "This invite has already been used. If that was you, just log in normally." });
+      } else if (failure === "cancelled") {
+        setState({ status: "error", message: "This invite was cancelled by a workspace admin." });
+      } else if (failure === "expired") {
+        setState({ status: "error", message: "This invite has expired. Ask a workspace admin to resend it." });
+      } else if (failure === "already_member") {
+        setState({ status: "error", message: "You already belong to this workspace." });
+      } else {
+        toast.error(message);
+      }
     } finally {
       setIsAccepting(false);
     }
@@ -158,9 +176,52 @@ export default function AcceptInvitePage({ params }: { params: Promise<{ inviteI
             <p className="mt-1 text-lg font-semibold text-foreground">{invite.workspaceName}</p>
             <p className="mt-1 text-xs capitalize text-foreground-muted">as {invite.role}</p>
           </div>
-          <Button className="w-full" isLoading={isAccepting} onClick={() => handleAccept(invite)}>
-            Accept invitation
-          </Button>
+          {verification.verified ? (
+            <>
+              <p className="flex items-center gap-1 text-xs text-success">
+                <BadgeCheck className="h-3.5 w-3.5" />
+                Email verified{firebaseUser.email ? `: ${firebaseUser.email}` : ""}
+              </p>
+              <Button className="w-full" isLoading={isAccepting} onClick={() => handleAccept(invite)}>
+                Accept invitation
+              </Button>
+            </>
+          ) : (
+            <div className="flex w-full flex-col gap-3 rounded-theme border border-warning/40 bg-warning/10 p-3 text-left" data-testid="verify-email-card">
+              <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <MailWarning className="h-4 w-4 text-warning" />
+                Email not verified
+              </p>
+              <p className="text-xs text-foreground-muted">
+                To join <span className="font-medium text-foreground">{invite.workspaceName}</span> you must first confirm that{" "}
+                <span className="font-medium text-foreground">{firebaseUser.email}</span> is your address. We sent a verification email to it — open the link in that
+                email (check your spam folder too), then come back here and press <span className="font-medium">I&apos;ve verified — check again</span>.
+              </p>
+              {verification.message && (
+                <p
+                  role="status"
+                  className={`text-xs ${verification.message.kind === "error" ? "text-error" : verification.message.kind === "success" ? "text-success" : "text-foreground-muted"}`}
+                >
+                  {verification.message.text}
+                </p>
+              )}
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button className="flex-1" isLoading={verification.busy === "check"} disabled={verification.busy !== null} onClick={() => void verification.check()}>
+                  <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                  I&apos;ve verified — check again
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  isLoading={verification.busy === "resend"}
+                  disabled={verification.busy !== null || verification.cooldownSeconds > 0}
+                  onClick={() => void verification.resend()}
+                >
+                  {verification.cooldownSeconds > 0 ? `Resend email (${verification.cooldownSeconds}s)` : "Resend verification email"}
+                </Button>
+              </div>
+            </div>
+          )}
           <p className="flex items-center gap-1 text-xs text-foreground-muted">
             <Clock className="h-3 w-3" />
             Expires {new Date(invite.expiresAt).toLocaleDateString()}

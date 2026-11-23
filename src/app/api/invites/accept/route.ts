@@ -6,6 +6,14 @@ import { isPlatformSuperAdmin } from "@/lib/server/seats";
 
 export const runtime = "nodejs";
 
+class InviteClaimedError extends Error {}
+
+/** True when `uid` is already a member of the workspace BECAUSE of this very invitation (i.e. a duplicate/retried accept by the same person). */
+async function acceptedBy(workspaceId: string, uid: string, inviteId: string): Promise<boolean> {
+  const snap = await adminDb().collection("members").doc(`${workspaceId}_${uid}`).get();
+  return snap.exists && snap.data()?.sourceInviteId === inviteId && snap.data()?.userId === uid;
+}
+
 interface AcceptInviteRequestBody {
   inviteId: string;
   displayName: string;
@@ -58,11 +66,17 @@ export async function POST(request: NextRequest) {
   }
   const invite = inviteSnap.data() as { workspaceId: string; email: string; role: string; status: string; expiresAt: string };
 
-  if (invite.status !== "pending") {
-    return NextResponse.json({ error: "This invitation has already been used or cancelled." }, { status: 409 });
-  }
   if (invite.email.trim().toLowerCase() !== email.trim().toLowerCase()) {
     return NextResponse.json({ error: "This invitation was addressed to a different email.", code: "WORKSPACE_ACCESS_DENIED" }, { status: 403 });
+  }
+  if (invite.status !== "pending") {
+    // A duplicate click / retried request for an invitation THIS person just accepted is success, not an error (no second member, no second seat).
+    if (invite.status === "accepted" && (await acceptedBy(invite.workspaceId, uid, inviteId))) {
+      return NextResponse.json({ success: true, workspaceId: invite.workspaceId, alreadyAccepted: true });
+    }
+    return invite.status === "cancelled"
+      ? NextResponse.json({ error: "This invitation was cancelled.", code: "INVITE_CANCELLED" }, { status: 409 })
+      : NextResponse.json({ error: "This invitation has already been used.", code: "INVITE_ALREADY_USED" }, { status: 409 });
   }
   if (new Date(invite.expiresAt).getTime() < Date.now()) {
     return NextResponse.json({ error: "This invitation has expired." }, { status: 410 });
@@ -75,8 +89,13 @@ export async function POST(request: NextRequest) {
   // at sign-up must not be able to join the workspace.
   try {
     const authUser = await adminAuth().getUser(uid);
+    // The decision rests ONLY on this server-side read of the Firebase Auth record — never on a flag, claim or field the browser sent. The record's CURRENT
+    // address must also still be the invited one (the ID token's copy can be stale after an address change).
     if (!authUser.emailVerified) {
       return NextResponse.json({ error: "Verify your email address first (check your inbox for the verification link), then accept this invitation.", code: "EMAIL_NOT_VERIFIED" }, { status: 403 });
+    }
+    if ((authUser.email ?? "").trim().toLowerCase() !== invite.email.trim().toLowerCase()) {
+      return NextResponse.json({ error: "This invitation was addressed to a different email.", code: "WORKSPACE_ACCESS_DENIED" }, { status: 403 });
     }
   } catch (err) {
     console.error("[invites/accept] couldn't read the auth record:", err);
@@ -88,6 +107,14 @@ export async function POST(request: NextRequest) {
   const allowedDomains: string[] = (settingsSnap.data()?.security?.allowedEmailDomains ?? []).filter((d: unknown): d is string => typeof d === "string" && d.trim().length > 0).map((d: string) => d.trim().toLowerCase().replace(/^@/, ""));
   if (allowedDomains.length > 0 && !allowedDomains.includes(email.trim().toLowerCase().split("@").pop() ?? "")) {
     return NextResponse.json({ error: `This workspace only accepts members with an email at: ${allowedDomains.join(", ")}.`, code: "EMAIL_DOMAIN_NOT_ALLOWED" }, { status: 403 });
+  }
+
+  // Someone who already belongs to this workspace must not take a second seat or have their role overwritten by an invitation (a retry of THIS invitation
+  // is handled above/below as success).
+  const existingMember = await adminDb().collection("members").doc(`${workspaceId}_${uid}`).get();
+  if (existingMember.exists) {
+    if (existingMember.data()?.sourceInviteId === inviteId) return NextResponse.json({ success: true, workspaceId, alreadyAccepted: true });
+    return NextResponse.json({ error: "You already belong to this workspace.", code: "ALREADY_MEMBER" }, { status: 409 });
   }
 
   try {
@@ -109,24 +136,33 @@ export async function POST(request: NextRequest) {
 
   const memberRef = adminDb().collection("members").doc(`${workspaceId}_${uid}`);
   try {
-    const batch = adminDb().batch();
-    batch.set(memberRef, {
-      id: `${workspaceId}_${uid}`,
-      workspaceId,
-      userId: uid,
-      role,
-      email,
-      displayName: body.displayName || "Unknown",
-      photoURL: body.photoURL ?? null,
-      status: "active",
-      sourceInviteId: inviteId,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
+    // Claiming the invitation and creating the member are ONE atomic step: of two concurrent requests (double click, retry), exactly one wins.
+    await adminDb().runTransaction(async (tx) => {
+      const [current, memberNow] = await Promise.all([tx.get(inviteRef), tx.get(memberRef)]);
+      if (current.data()?.status !== "pending" || memberNow.exists) throw new InviteClaimedError();
+      tx.set(memberRef, {
+        id: `${workspaceId}_${uid}`,
+        workspaceId,
+        userId: uid,
+        role,
+        email,
+        displayName: body.displayName || "Unknown",
+        photoURL: body.photoURL ?? null,
+        status: "active",
+        sourceInviteId: inviteId,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      tx.update(inviteRef, { status: "accepted", acceptedAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
+      tx.set(adminDb().collection("users").doc(uid), { onboardingComplete: true, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
     });
-    batch.update(inviteRef, { status: "accepted", acceptedAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
-    batch.set(adminDb().collection("users").doc(uid), { onboardingComplete: true, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-    await batch.commit();
   } catch (err) {
+    if (err instanceof InviteClaimedError) {
+      // Lost the race: the seat reserved above is returned by a recount, and a duplicate from the SAME person is reported as success.
+      await resyncSlotCount(workspaceId, "member").catch(() => undefined);
+      if (await acceptedBy(workspaceId, uid, inviteId)) return NextResponse.json({ success: true, workspaceId, alreadyAccepted: true });
+      return NextResponse.json({ error: "This invitation has already been used.", code: "INVITE_ALREADY_USED" }, { status: 409 });
+    }
     console.error("[invites/accept] member creation failed after reserving a slot — resyncing count:", err);
     await resyncSlotCount(workspaceId, "member").catch((resyncErr) => console.error("[invites/accept] resync-after-failure also failed:", resyncErr));
     return NextResponse.json({ error: "Couldn't accept this invitation. Try again." }, { status: 500 });

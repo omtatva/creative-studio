@@ -178,8 +178,14 @@ export async function acceptInvite(invite: WorkspaceInvite, actor: TaskActor): P
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (data?.code === "WORKSPACE_MEMBER_LIMIT_REACHED" || data?.code === "MEMBER_LIMIT_REACHED") throw new MemberQuotaError(data.error);
-    throw new Error(typeof data?.error === "string" ? data.error : "Couldn't accept this invitation.");
+    // Keep the server's machine-readable code + status so the invite page can react precisely (e.g. show the verify-your-email step).
+    throw Object.assign(new Error(typeof data?.error === "string" ? data.error : "Couldn't accept this invitation."), {
+      code: typeof data?.code === "string" ? data.code : undefined,
+      status: response.status,
+    });
   }
+  // `alreadyAccepted` = a duplicate/retried request for an invitation this same person had just accepted: success, no second activity entry.
+  if (data?.alreadyAccepted) return;
 
   await logActivity(invite.workspaceId, {
     actorId: actor.uid,
