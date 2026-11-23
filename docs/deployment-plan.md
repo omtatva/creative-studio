@@ -1,4 +1,19 @@
-# Feedo deployment plan (for approval — nothing here has been run)
+# Feedo deployment plan
+
+## Status log (2026-11-23)
+| Step | State |
+|---|---|
+| 1. Firestore rules | **APPLIED + VERIFIED** 13:01 UTC — live ruleset (b21d3778…) read back and byte-identical to `firebase-config/firestore.rules`; history tab then loaded and updated live in the browser |
+| 2. Runtime SA Token Creator | **NOT VERIFIED** — IAM policy unreadable with available credentials; verify with the read-only command below; proven behaviourally after rollout (`"direct": true` on a download) |
+| 3. Production CORS | **APPLIED + VERIFIED** — API read-back equals `docs/infra/cors.production.json`; real preflights: production origin allowed, `http://localhost:3000` and a foreign origin refused, never `*` |
+| 4. Lifecycle (abort incomplete multipart after 2 days) | **APPLIED + VERIFIED** by API read-back; no other bucket setting changed |
+| 5. Push / App Hosting rollout | pending approval |
+| 6. Cloud Run Job | pending approval |
+| 7. Flags | pending (stay OFF until 1–4 verified and 6 tested) |
+
+Facts found: App Hosting backend `creative-studio-backend` runs in **asia-southeast1** (Node 22), the bucket and the planned job in asia-south1; `apply_bucket_config.cjs` (scripts/qa/large-files) applied steps 3–4 without gcloud (`--rollback` clears both).
+Read-only Token Creator check: `gcloud iam service-accounts get-iam-policy firebase-app-hosting-compute@creative-studio-176c0.iam.gserviceaccount.com` — look for `roles/iam.serviceAccountTokenCreator` held by that same account.
+
 
 Existing project/bucket/regions only: `creative-studio-176c0`, `creative-studio-176c0.firebasestorage.app`, `asia-south1`. Production origin: `https://otdfeedo.omtatvadigitals.com` (App Hosting backend `creative-studio-backend`, rolls out from GitHub `main`). `gcloud` is **not installed on the development machine** — run the `gcloud`/`firebase` steps in Cloud Shell or after installing the Google Cloud SDK. No new infrastructure is created except the one Cloud Run Job (and its dedicated service account / Artifact Registry repo if they don't exist yet).
 
