@@ -1,5 +1,6 @@
 "use client";
 
+import { GB } from "@/lib/constants/uploadPolicy";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check } from "lucide-react";
@@ -38,7 +39,7 @@ const HIGHLIGHTED_PLAN: WorkspacePlan = "pro";
 function formatLimit(value: number, unit: "count" | "bytes"): string {
   if (!Number.isFinite(value)) return "Unlimited";
   if (unit === "count") return value.toLocaleString();
-  const gb = value / (1024 * 1024 * 1024);
+  const gb = value / GB;
   return gb >= 1 ? `${gb % 1 === 0 ? gb : gb.toFixed(1)} GB` : `${(value / (1024 * 1024)).toFixed(0)} MB`;
 }
 

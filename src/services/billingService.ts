@@ -1,6 +1,7 @@
 import { getCurrentUser } from "@/lib/firebase/auth";
 import { SubscriptionStatus, WorkspaceSubscription } from "@/types/billing.types";
 import { WorkspacePlan, WorkspacePlanLimits } from "@/types/workspace.types";
+import type { WorkspaceEntitlements } from "@/types/entitlements.types";
 
 /**
  * Client-facing billing abstraction — every "change what this
@@ -77,4 +78,28 @@ export function resyncBillingCache(workspaceId: string) {
 /** Called once, right after a brand-new workspace is created (see useWorkspace.ts) — starts its 7-day Pro trial. Best-effort: a failure here should never block workspace creation itself. */
 export function startTrial(workspaceId: string) {
   return callBillingApi<{ subscription: WorkspaceSubscription }>("/api/billing/start-trial", { workspaceId });
+}
+
+/** The resolved entitlements + usage for a workspace (see types/entitlements.types.ts). Super Admin may read any workspace; a member reads their own (seat details: owner/admin only). Read-only. */
+export async function getWorkspaceEntitlements(workspaceId: string): Promise<{ entitlements: WorkspaceEntitlements; canEditOverrides: boolean }> {
+  const result = await callBillingApi<{ entitlements: WorkspaceEntitlements; canEditOverrides: boolean }>("/api/workspaces/entitlements", { workspaceId });
+  if (!result.ok || !result.data) throw new Error(result.error ?? "Could not load this workspace's plan details.");
+  return result.data;
+}
+
+/** Super Admin only. A number sets the override, null removes it (back to the plan); a key left out is unchanged. Takes effect immediately. */
+export async function setEntitlementOverrides(
+  workspaceId: string,
+  overrides: { maxMembers?: number | null; maxStorageBytes?: number | null; maxFileEntitlementBytes?: number | null }
+): Promise<WorkspaceEntitlements> {
+  const result = await callBillingApi<{ entitlements: WorkspaceEntitlements }>("/api/billing/set-overrides", { workspaceId, ...overrides });
+  if (!result.ok || !result.data) throw new Error(result.error ?? "Could not save the overrides.");
+  return result.data.entitlements;
+}
+
+/** Owner/admin: choose a per-file limit for this workspace (can only be at or below the workspace's entitlement ceiling; null clears it). */
+export async function setWorkspaceFileLimit(workspaceId: string, maxFileSizeMb: number | null): Promise<WorkspaceEntitlements> {
+  const result = await callBillingApi<{ entitlements: WorkspaceEntitlements }>("/api/workspaces/file-limit", { workspaceId, maxFileSizeMb });
+  if (!result.ok || !result.data) throw new Error(result.error ?? "Could not save the file size limit.");
+  return result.data.entitlements;
 }

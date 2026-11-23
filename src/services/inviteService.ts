@@ -177,7 +177,7 @@ export async function acceptInvite(invite: WorkspaceInvite, actor: TaskActor): P
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    if (data?.code === "MEMBER_LIMIT_REACHED") throw new MemberQuotaError(data.error);
+    if (data?.code === "WORKSPACE_MEMBER_LIMIT_REACHED" || data?.code === "MEMBER_LIMIT_REACHED") throw new MemberQuotaError(data.error);
     throw new Error(typeof data?.error === "string" ? data.error : "Couldn't accept this invitation.");
   }
 

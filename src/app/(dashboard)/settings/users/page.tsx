@@ -4,6 +4,8 @@ import { useState } from "react";
 import { Link2, RotateCw, UserPlus, X } from "lucide-react";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { GmailConnectionSection } from "@/components/settings/GmailConnectionSection";
+import { SeatUsageCard } from "@/components/settings/SeatUsageCard";
+import { useWorkspaceSettings } from "@/hooks/useWorkspaceSettings";
 import { InviteUserModal } from "@/components/settings/InviteUserModal";
 import { Button } from "@/components/ui/Button";
 import { WorkspaceAdminOnly } from "@/components/auth/WorkspaceAdminOnly";
@@ -45,6 +47,7 @@ function UsersSettingsPageContent() {
   const canInvite = canManageWorkspace || canManageMembers;
   const canActOnInvite = (invite: WorkspaceInvite) => canManageMembers || (canInvite && invite.role !== "admin");
   const toast = useToast();
+  const { settings: workspaceSettings } = useWorkspaceSettings();
 
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [isInviting, setIsInviting] = useState(false);
@@ -75,6 +78,12 @@ function UsersSettingsPageContent() {
       return;
     }
     const normalizedEmail = values.email.trim().toLowerCase();
+    // Friendly pre-check of Settings > Security > Allowed email domains (the server enforces it again when the invitation is accepted).
+    const allowedDomains = (workspaceSettings?.security?.allowedEmailDomains ?? []).map((d) => d.trim().toLowerCase().replace(/^@/, "")).filter(Boolean);
+    if (allowedDomains.length > 0 && !allowedDomains.includes(normalizedEmail.split("@").pop() ?? "")) {
+      toast.error(`This workspace only accepts people with an email at: ${allowedDomains.join(", ")}.`);
+      return;
+    }
     setIsInviting(true);
     try {
       const alreadyMember = members.some((m) => m.email.trim().toLowerCase() === normalizedEmail);
@@ -203,6 +212,8 @@ function UsersSettingsPageContent() {
           </Button>
         )}
       </div>
+
+      <SeatUsageCard />
 
       <GmailConnectionSection />
 

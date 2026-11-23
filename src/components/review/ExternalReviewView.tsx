@@ -378,10 +378,11 @@ function ReviewPage({ token, data, version, onVersion, onRefresh }: { token: str
   }
 
   async function download() {
-    const res = await reviewApi<{ ticket: string; fileName: string }>("download", { token, version });
+    const res = await reviewApi<{ ticket?: string; url?: string; fileName: string }>("download", { token, version });
     if (!res.ok) return setMessage(res.data.error ?? "Download isn't available.");
     const a = document.createElement("a");
-    a.href = `/api/files/download?t=${encodeURIComponent(res.data.ticket)}`;
+    // Direct short-lived storage URL (original file), or — if signing isn't available — the ticketed server stream.
+    a.href = res.data.url ?? `/api/files/download?t=${encodeURIComponent(res.data.ticket ?? "")}`;
     a.download = res.data.fileName ?? "";
     document.body.appendChild(a);
     a.click();

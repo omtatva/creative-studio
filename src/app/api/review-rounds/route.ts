@@ -203,6 +203,11 @@ export async function POST(request: NextRequest) {
     if (!caps.canDecide) return bad("You don't have permission to approve or request changes on reviews in this project.", 403, "permission_denied");
     const note = body.note == null || body.note === "" ? null : str(body.note, 2000);
     if (body.note != null && body.note !== "" && !note) return bad("The note is too long.");
+    // Settings > Review Settings: when the workspace requires it, asking for changes must say what to change.
+    if (decision === "changes_requested" && !note) {
+      const reviewSettings = (await db.collection("settings").doc(workspaceId).get()).data()?.reviewDefaults as { requireCommentOnChangesRequested?: boolean } | undefined;
+      if (reviewSettings?.requireCommentOnChangesRequested) return bad("Add a note explaining what needs to change before requesting changes.", 400, "note_required");
+    }
     // Decisions are recorded for the CALLER only, on the stored round; they must be a listed (not removed) reviewer.
     const res = await recordDecision(round.id, myKey, decision, note);
     if (!res.ok) return bad(res.error, res.status, res.code);

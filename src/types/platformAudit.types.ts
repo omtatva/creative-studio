@@ -34,6 +34,7 @@ export type PlatformAuditAction =
   | "plan_activated"
   | "enterprise_activated"
   | "subscription_status_changed"
+  | "entitlement_overrides_updated"
   | "platform_settings_updated";
 
 export interface PlatformAuditLogEntry extends Timestamps {

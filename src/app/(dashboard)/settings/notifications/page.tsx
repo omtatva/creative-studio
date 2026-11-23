@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
-import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Loader } from "@/components/ui/Loader";
 import { useWorkspaceSettings } from "@/hooks/useWorkspaceSettings";
@@ -11,37 +10,34 @@ import { useToast } from "@/hooks/useToast";
 import { DEFAULT_NOTIFICATION_SETTINGS } from "@/lib/constants/settingsDefaults";
 import { NotificationSettings } from "@/types/settings.types";
 
-const DIGEST_OPTIONS: { value: NotificationSettings["digestFrequency"]; label: string }[] = [
-  { value: "off", label: "Off" },
-  { value: "daily", label: "Daily" },
-  { value: "weekly", label: "Weekly" },
-];
-
-const PREFERENCE_LABELS: { key: keyof NotificationSettings["preferences"]; label: string; description: string }[] = [
-  { key: "taskAssigned", label: "Task assigned", description: "When someone assigns you a task" },
-  { key: "reviewUpdates", label: "Review updates", description: "When a review is approved or sent back" },
-  { key: "comments", label: "Comments", description: "New comments on tasks you're involved in" },
-  { key: "mentions", label: "Mentions", description: "When someone @mentions you" },
-];
-
+/**
+ * Notifications. The in-app switch and the two triggers below are applied by the server where in-app notifications are created
+ * (lib/server/notifications.ts), so they genuinely change what members receive. Email, Slack, digests, comment and mention
+ * notifications have no delivery system behind them yet, so they are listed as unavailable instead of offered as switches.
+ */
 export default function NotificationsSettingsPage() {
   const { settings, isLoading, isSaving, save } = useWorkspaceSettings();
   const toast = useToast();
-  const [draft, setDraft] = useState<NotificationSettings>(DEFAULT_NOTIFICATION_SETTINGS);
-  const [webhookError, setWebhookError] = useState<string | null>(null);
+  const [inApp, setInApp] = useState(true);
+  const [taskAssigned, setTaskAssigned] = useState(true);
+  const [reviewUpdates, setReviewUpdates] = useState(true);
+
+  const saved: NotificationSettings = { ...DEFAULT_NOTIFICATION_SETTINGS, ...(settings?.notifications ?? {}), preferences: { ...DEFAULT_NOTIFICATION_SETTINGS.preferences, ...(settings?.notifications?.preferences ?? {}) } };
 
   useEffect(() => {
-    if (settings) setDraft(settings.notifications ?? DEFAULT_NOTIFICATION_SETTINGS);
+    if (!settings) return;
+    setInApp(saved.inAppEnabled);
+    setTaskAssigned(saved.preferences.taskAssigned);
+    setReviewUpdates(saved.preferences.reviewUpdates);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings]);
 
+  const dirty = inApp !== saved.inAppEnabled || taskAssigned !== saved.preferences.taskAssigned || reviewUpdates !== saved.preferences.reviewUpdates;
+
   async function handleSave() {
-    if (draft.slackEnabled && draft.slackWebhookUrl && !/^https:\/\/hooks\.slack\.com\/.+/.test(draft.slackWebhookUrl)) {
-      setWebhookError("Must be a Slack webhook URL (https://hooks.slack.com/...)");
-      return;
-    }
-    setWebhookError(null);
     try {
-      await save({ notifications: draft });
+      // Only the three working values change; everything else already stored is carried over untouched.
+      await save({ notifications: { ...saved, inAppEnabled: inApp, preferences: { ...saved.preferences, taskAssigned, reviewUpdates } } });
       toast.success("Notification settings saved");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't save settings");
@@ -54,55 +50,23 @@ export default function NotificationsSettingsPage() {
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-xl font-semibold text-foreground">Notifications</h1>
-        <p className="mt-1 text-sm text-foreground-muted">Choose how your workspace gets notified.</p>
+        <p className="mt-1 text-sm text-foreground-muted">Choose which in-app notifications your workspace sends.</p>
       </div>
 
       <SettingsSection
-        title="Channels"
-        action={<Button size="sm" onClick={handleSave} isLoading={isSaving}>Save changes</Button>}
+        title="In-app notifications"
+        description="Shown in the bell menu and on the Notifications page."
+        action={<Button size="sm" onClick={handleSave} isLoading={isSaving} disabled={!dirty}>Save changes</Button>}
       >
         <div className="flex flex-col gap-4">
-          <ToggleSwitch checked={draft.emailEnabled} onChange={(v) => setDraft({ ...draft, emailEnabled: v })} label="Email notifications" description="Send notifications to members' email" />
-          <ToggleSwitch checked={draft.inAppEnabled} onChange={(v) => setDraft({ ...draft, inAppEnabled: v })} label="In-app notifications" description="Show notifications in the bell menu" />
-          <ToggleSwitch checked={draft.slackEnabled} onChange={(v) => setDraft({ ...draft, slackEnabled: v })} label="Slack notifications" description="Post notifications to a Slack channel" />
-          {draft.slackEnabled && (
-            <Input
-              label="Slack webhook URL"
-              placeholder="https://hooks.slack.com/services/..."
-              value={draft.slackWebhookUrl ?? ""}
-              onChange={(e) => setDraft({ ...draft, slackWebhookUrl: e.target.value })}
-              error={webhookError ?? undefined}
-            />
-          )}
+          <ToggleSwitch checked={inApp} onChange={setInApp} label="Send in-app notifications" description="Turn off to stop creating notifications for everyone in this workspace" />
+          <ToggleSwitch checked={taskAssigned} onChange={setTaskAssigned} disabled={!inApp} label="Task assigned" description="When someone is assigned a task" />
+          <ToggleSwitch checked={reviewUpdates} onChange={setReviewUpdates} disabled={!inApp} label="Review updates" description="When a review round is requested or decided" />
         </div>
       </SettingsSection>
 
-      <SettingsSection title="Digest frequency">
-        <div className="flex gap-2">
-          {DIGEST_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => setDraft({ ...draft, digestFrequency: opt.value })}
-              className={`rounded-theme border px-3 py-1.5 text-sm font-medium ${draft.digestFrequency === opt.value ? "border-primary bg-primary/10 text-primary" : "border-border text-foreground-muted hover:bg-surface-muted"}`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      </SettingsSection>
-
-      <SettingsSection title="Notification preferences" description="What triggers a notification.">
-        <div className="flex flex-col gap-4">
-          {PREFERENCE_LABELS.map(({ key, label, description }) => (
-            <ToggleSwitch
-              key={key}
-              checked={draft.preferences[key]}
-              onChange={(v) => setDraft({ ...draft, preferences: { ...draft.preferences, [key]: v } })}
-              label={label}
-              description={description}
-            />
-          ))}
-        </div>
+      <SettingsSection title="Not available yet" description="These have no delivery system behind them, so there is nothing to switch on.">
+        <p className="text-sm text-foreground-muted">Email notifications, Slack notifications, daily/weekly digests, and comment and @mention notifications.</p>
       </SettingsSection>
     </div>
   );

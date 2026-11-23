@@ -4,8 +4,10 @@ import { verifyRequestAuth, AuthVerificationError, adminDb, adminStorage } from 
 import { reserveStorageBytes, resyncSlotCount, WorkspaceQuotaError } from "@/lib/server/workspaceQuota";
 import { isFeatureAllowed, featureDisabledBody } from "@/lib/server/featureAccess";
 import type { MemberRole } from "@/types/workspace.types";
-import { assetTypeFromContentType, effectiveMaxFileBytes, formatFileLimit } from "@/lib/constants/creativeFiles";
-import { DEFAULT_ASSET_STATUS_ID } from "@/lib/constants/assetOptions";
+import { formatFileLimit } from "@/lib/constants/creativeFiles";
+import { buildFileDocument } from "@/lib/server/fileRecords";
+import { enqueueVideoProcessing } from "@/lib/server/videoProcessing";
+import { resolveWorkspaceFilePolicy } from "@/lib/server/workspaceEntitlements";
 
 export const runtime = "nodejs";
 
@@ -174,21 +176,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Couldn't find the uploaded file. Try uploading again." }, { status: 404 });
   }
 
-  // The workspace owner/admin's per-file limit (Settings > Storage), capped by the platform ceiling — checked against the REAL object size,
-  // so a modified browser can't skip it. A too-large object is removed, exactly like an over-quota one below.
+  // The EFFECTIVE per-file limit, resolved by the one trusted policy (platform safety ceiling -> plan/override entitlement -> the workspace's own lower
+  // choice) and checked against the REAL object size, so a modified browser can't skip it. New files and new versions both land here. A too-large
+  // object is removed, exactly like an over-quota one below. If the policy can't be resolved this FAILS CLOSED (503) — never "assume a bigger limit".
+  let filePolicy;
   try {
-    const settingsSnap = await adminDb().collection("settings").doc(workspaceId).get();
-    const maxFileBytes = effectiveMaxFileBytes(settingsSnap.data()?.storage?.maxFileSizeMb as number | null | undefined);
-    if (realSizeBytes > maxFileBytes) {
-      await adminStorage().file(storagePath).delete({ ignoreNotFound: true }).catch((deleteErr) => console.error("[files/finalize] failed to delete over-limit upload:", deleteErr));
-      return NextResponse.json(
-        { error: `This file is ${formatFileLimit(realSizeBytes)}, over this workspace's per-file limit of ${formatFileLimit(maxFileBytes)}. An owner or admin can change it in Settings > Storage.`, code: "FILE_TOO_LARGE" },
-        { status: 413 }
-      );
-    }
+    filePolicy = await resolveWorkspaceFilePolicy(workspaceId);
   } catch (limitErr) {
-    // The per-file limit is a workspace preference; the plan's storage quota below remains the hard cap. A read failure is logged, never silent.
-    console.error("[files/finalize] couldn't read the per-file limit setting — applying the platform ceiling only:", limitErr);
+    console.error("[files/finalize] couldn't resolve the workspace's file policy — refusing rather than guessing:", limitErr);
+    return NextResponse.json({ error: "Couldn't verify this workspace's upload limits right now. Your file was kept — please try again in a moment.", code: "ENTITLEMENTS_UNAVAILABLE" }, { status: 503 });
+  }
+  if (realSizeBytes > filePolicy.maxFileBytes) {
+    await adminStorage().file(storagePath).delete({ ignoreNotFound: true }).catch((deleteErr) => console.error("[files/finalize] failed to delete over-limit upload:", deleteErr));
+    return NextResponse.json(
+      { error: `This file is ${formatFileLimit(realSizeBytes)}, over this workspace's per-file limit of ${formatFileLimit(filePolicy.maxFileBytes)}. ${filePolicy.source === "workspace" ? "An owner or admin can change it in Settings > Storage." : "A higher limit has to be granted by the platform."}`, code: "FILE_TOO_LARGE" },
+      { status: 413 }
+    );
   }
 
   try {
@@ -219,53 +222,31 @@ export async function POST(request: NextRequest) {
   const now = FieldValue.serverTimestamp();
 
   try {
-    await fileRef.set({
-      id: fileId,
-      workspaceId,
-      projectId,
-      fileName: body.fileName,
-      originalName: body.fileName,
-      contentType: body.contentType || "application/octet-stream",
-      // Recomputed from the verified contentType/fileName, not trusted
-      // from the client's own claim — a cheap, purely cosmetic
-      // categorization, but there's no reason to trust it when it's
-      // this easy to derive server-side from data already verified.
-      assetType: assetTypeFromContentType(body.contentType || "application/octet-stream", body.fileName),
-      sizeBytes: realSizeBytes,
-      url: body.url,
-      thumbnailUrl: body.thumbnailUrl ?? null,
-      storagePath,
-      uploadedBy: {
-        uid,
-        displayName: body.uploadedBy?.displayName || "Unknown",
-        photoURL: body.uploadedBy?.photoURL ?? null,
-        email: body.uploadedBy?.email || "",
-      },
-      reviewStatus: "none",
-      statusId: DEFAULT_ASSET_STATUS_ID,
-      stageId: body.stageId ?? null,
-      assetGroupId: body.assetGroupId || fileId,
-      versionNumber: body.versionNumber ?? 1,
-      previousVersionId: body.previousVersionId ?? null,
-      isLatestVersion: true,
-      durationSeconds: body.durationSeconds ?? null,
-      shareSettings: null,
-      createdAt: now,
-      updatedAt: now,
-    });
+    await fileRef.set(
+      buildFileDocument({
+        fileId,
+        workspaceId,
+        projectId,
+        fileName: body.fileName,
+        contentType: body.contentType || "application/octet-stream",
+        sizeBytes: realSizeBytes,
+        url: body.url,
+        thumbnailUrl: body.thumbnailUrl ?? null,
+        storagePath,
+        uploadedBy: { uid, displayName: body.uploadedBy?.displayName, photoURL: body.uploadedBy?.photoURL, email: body.uploadedBy?.email },
+        stageId: body.stageId ?? null,
+        assetGroupId: body.assetGroupId || fileId,
+        versionNumber: body.versionNumber ?? 1,
+        previousVersionId: body.previousVersionId ?? null,
+        durationSeconds: body.durationSeconds ?? null,
+        uploadMethod: "resumable",
+      })
+    );
 
     if (body.newVersionOfId) {
       await adminDb().collection("files").doc(body.newVersionOfId).update({ isLatestVersion: false, updatedAt: now });
     }
 
-    // Keep the existing display counter in sync too — StorageUsage.tsx
-    // and Settings > Storage read this field; storageBytesUsed above
-    // (already updated by reserveStorageBytes) is the ENFORCEMENT
-    // counter, this one is purely for the existing UI.
-    await adminDb()
-      .collection("settings")
-      .doc(workspaceId)
-      .set({ storage: { usedBytes: FieldValue.increment(realSizeBytes) } }, { merge: true });
   } catch (err) {
     console.error("[files/finalize] Firestore write failed after reserving storage — resyncing:", err);
     await resyncSlotCount(workspaceId, "storage").catch((resyncErr) =>
@@ -274,5 +255,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Couldn't finish saving this file. Try again." }, { status: 500 });
   }
 
+  void enqueueVideoProcessing(fileId).catch((err) => console.error("[files/finalize] couldn't queue video processing:", err instanceof Error ? err.message : err));
   return NextResponse.json({ success: true, fileId, sizeBytes: realSizeBytes });
 }

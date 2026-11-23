@@ -1,0 +1,75 @@
+{
+ "alpn": {
+  "negotiated": "h2",
+  "tlsVersion": "TLSv1.3"
+ },
+ "http2": {
+  "h2": true,
+  "maxConcurrentStreams": 100
+ },
+ "localSigningMs": {
+  "n": 100,
+  "p50": 1,
+  "p95": 1,
+  "min": 1,
+  "max": 4
+ },
+ "upload": {
+  "sizeMB": 96,
+  "partMB": 8,
+  "parts": 12,
+  "initMs": 3153,
+  "uploadMs": 10322,
+  "finalizeMs": 2312,
+  "MBps": 9.3
+ },
+ "routeLatencyMs": {
+  "init": {
+   "n": 1,
+   "p50": 3154,
+   "p95": 3154,
+   "min": 3154,
+   "max": 3154
+  },
+  "parts": {
+   "n": 12,
+   "p50": 843,
+   "p95": 4082,
+   "min": 528,
+   "max": 4082
+  },
+  "status": {
+   "n": 1,
+   "p50": 1115,
+   "p95": 1115,
+   "min": 1115,
+   "max": 1115
+  },
+  "complete": {
+   "n": 1,
+   "p50": 2311,
+   "p95": 2311,
+   "min": 2311,
+   "max": 2311
+  },
+  "putPart": {
+   "n": 12,
+   "p50": 1389,
+   "p95": 2528,
+   "min": 865,
+   "max": 2528
+  }
+ },
+ "newConnectionsForOneUpload": 10,
+ "availabilityAfterComplete": {
+  "readableAfterMs": 723,
+  "attempts": 1
+ },
+ "sequential5MiBPutMs": {
+  "n": 5,
+  "p50": 626,
+  "p95": 883,
+  "min": 451,
+  "max": 883
+ }
+}

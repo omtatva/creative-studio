@@ -3,6 +3,7 @@
 import { Play, Trash2 } from "lucide-react";
 import { FileTypeIcon } from "@/components/files/FileTypeIcon";
 import { AssetStatusBadge } from "./AssetStatusBadge";
+import { ProcessingBadge } from "./ProcessingBadge";
 import { formatBytes } from "@/lib/utils/fileFormat";
 import { AssetGroup } from "@/lib/utils/assetVersions";
 
@@ -34,6 +35,9 @@ export function AssetCard({ group, onClick, onDelete }: { group: AssetGroup; onC
         ) : (
           <FileTypeIcon contentType={asset.contentType} className="h-8 w-8 text-foreground-muted" />
         )}
+        <div className="absolute bottom-1.5 left-1.5 z-10">
+          <ProcessingBadge file={asset} compact />
+        </div>
         {asset.assetType === "video" && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/20">
             <Play className="h-8 w-8 text-white opacity-0 drop-shadow transition-opacity group-hover:opacity-100" fill="currentColor" />

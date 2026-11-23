@@ -100,6 +100,10 @@ export const activityLogsCol = (workspaceId: string) =>
 export const notificationsCol = (workspaceId: string, uid: string) =>
   collection(db, "workspaces", workspaceId, "notifications", uid, "items");
 
+/** A member's own download history (server-written; see lib/server/downloadHistory.ts). */
+export const downloadHistoryCol = (workspaceId: string, uid: string) =>
+  collection(db, "workspaces", workspaceId, "download_history", uid, "items");
+
 /**
  * `projects` is a single top-level collection (not nested under
  * workspaces/) so it can be queried/paginated/sorted directly with

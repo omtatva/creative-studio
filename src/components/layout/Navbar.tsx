@@ -7,6 +7,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { NotificationsPanel } from "@/components/notifications/NotificationsPanel";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import { UploadIndicator } from "./UploadIndicator";
 import { useAuthContext } from "@/contexts/AuthContext";
 import { useUIStore } from "@/store/useUIStore";
 import { useAuth } from "@/hooks/useAuth";
@@ -49,6 +50,7 @@ export function Navbar() {
       <SearchBar containerClassName="hidden sm:block" placeholder="Search projects, tasks, files..." />
 
       <div className="ml-auto flex items-center gap-2">
+        <UploadIndicator />
         {can("notifications.view") && (
         <div ref={notifRef} className="relative">
           <button
@@ -90,7 +92,7 @@ export function Navbar() {
                 <p className="truncate text-xs text-foreground-muted">{profile?.email}</p>
               </div>
               <div className="my-1 h-px bg-border" />
-              <MenuLink href={ROUTES.settings} icon={<UserIcon className="h-4 w-4" />}>
+              <MenuLink href={ROUTES.profile} icon={<UserIcon className="h-4 w-4" />}>
                 Profile
               </MenuLink>
               <MenuLink href={ROUTES.settings} icon={<Settings className="h-4 w-4" />}>

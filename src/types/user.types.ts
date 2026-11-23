@@ -17,6 +17,9 @@ export interface AppUser extends Timestamps {
   photoURL: string | null;
   activeWorkspaceId: ID | null;
   onboardingComplete: boolean;
+  /** Optional contact details the user can add themselves from "My profile" (saved through /api/profile/update). */
+  phone?: string | null;
+  jobTitle?: string | null;
   /** Admin-write-only (see firestore.rules' users/{uid} block) — never settable by the user themselves, even on their own profile. */
   platformRole?: PlatformRole | null;
 }

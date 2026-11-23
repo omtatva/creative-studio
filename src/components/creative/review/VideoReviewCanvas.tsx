@@ -24,6 +24,8 @@ interface VideoReviewCanvasProps {
   seekTo: number | null;
   onSeekHandled: () => void;
   onTimeChange: (t: number) => void;
+  /** The <video> failed to load/decode — the page uses this to fall back from a playback proxy to the original. */
+  onMediaError?: () => void;
   highlightedCommentId: string | null;
   onCreateCommentMarker: (x: number, y: number, timestampSeconds: number) => void;
   onCreateShape: (data: AnnotationData, timestampSeconds: number) => void;
@@ -44,6 +46,7 @@ export function VideoReviewCanvas({
   seekTo,
   onSeekHandled,
   onTimeChange,
+  onMediaError,
   highlightedCommentId,
   onCreateCommentMarker,
   onCreateShape,
@@ -253,6 +256,7 @@ export function VideoReviewCanvas({
             src={asset.url}
             className="h-full w-full object-contain"
             onClick={handleMediaClick}
+            onError={() => onMediaError?.()}
             onPlay={() => setIsPlaying(true)}
             onPause={() => setIsPlaying(false)}
             onTimeUpdate={(e) => {

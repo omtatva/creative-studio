@@ -6,6 +6,8 @@ import { Sidebar } from "./Sidebar";
 import { PendingInviteNotice } from "@/components/workspace/PendingInviteNotice";
 import { ProjectAppearanceApplier } from "./ProjectAppearanceApplier";
 import { SuperAdminViewingBanner } from "./SuperAdminViewingBanner";
+import { WorkspaceBrandingApplier } from "./WorkspaceBrandingApplier";
+import { useWorkspaceSettings } from "@/hooks/useWorkspaceSettings";
 import { Navbar } from "./Navbar";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { ErrorState } from "@/components/shared/ErrorState";
@@ -58,6 +60,9 @@ export function MainLayout({ children }: { children: ReactNode }) {
   const { logout, isSubmitting: isSigningOut } = useAuth();
   const { maintenanceMode } = useMaintenanceMode();
   const isSuperAdmin = isSuperAdminUser(profile);
+  const { settings: brandingSettings } = useWorkspaceSettings();
+  // Settings > Branding > Dashboard background: shown behind the whole app shell while this workspace is active.
+  const dashboardBackgroundUrl = brandingSettings?.branding?.dashboardBackgroundUrl ?? null;
 
   return (
     <ProtectedRoute>
@@ -99,8 +104,12 @@ export function MainLayout({ children }: { children: ReactNode }) {
           </div>
         </div>
       ) : (
-        <div className="flex min-h-screen bg-background">
+        <div
+          className="flex min-h-screen bg-background"
+          style={dashboardBackgroundUrl ? { backgroundImage: `url("${dashboardBackgroundUrl}")`, backgroundSize: "cover", backgroundPosition: "center", backgroundAttachment: "fixed" } : undefined}
+        >
           <ProjectAppearanceApplier />
+          <WorkspaceBrandingApplier />
           <Sidebar />
           <div className="flex min-h-screen flex-1 flex-col">
             <Navbar />

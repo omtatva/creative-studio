@@ -8,6 +8,10 @@ export interface SecurePreview {
   url: string | null;
   isLoading: boolean;
   error: string | null;
+  /** "proxy" when playback uses the verified lower-resolution proxy; "original" otherwise. Downloads are unaffected (always the original). */
+  variant: "proxy" | "original" | null;
+  /** If the proxy can't play, switch to the original file for this session. */
+  fallbackToOriginal: () => void;
 }
 
 /**
@@ -23,11 +27,12 @@ export interface SecurePreview {
 export function useSecurePreview(file: { id: string; workspaceId: string } | null | undefined): SecurePreview {
   const fileId = file?.id;
   const workspaceId = file?.workspaceId;
-  const [state, setState] = useState<SecurePreview>({ url: null, isLoading: true, error: null });
+  const [state, setState] = useState<Omit<SecurePreview, "fallbackToOriginal">>({ url: null, isLoading: true, error: null, variant: null });
+  const [forceOriginal, setForceOriginal] = useState(false);
 
   useEffect(() => {
     if (!fileId || !workspaceId) {
-      setState({ url: null, isLoading: false, error: null });
+      setState({ url: null, isLoading: false, error: null, variant: null });
       return;
     }
     let cancelled = false;
@@ -35,9 +40,9 @@ export function useSecurePreview(file: { id: string; workspaceId: string } | nul
 
     const issue = async () => {
       try {
-        const { ticket, expiresAtMs } = await createPreviewTicket(workspaceId, fileId);
+        const { ticket, expiresAtMs, variant } = await createPreviewTicket(workspaceId, fileId, forceOriginal ? "original" : undefined);
         if (cancelled) return;
-        setState({ url: previewUrl(ticket), isLoading: false, error: null });
+        setState({ url: previewUrl(ticket), isLoading: false, error: null, variant: variant ?? "original" });
         const refreshIn = Math.max(60_000, expiresAtMs - Date.now() - 5 * 60_000);
         timer = setTimeout(issue, refreshIn);
       } catch (err) {
@@ -46,17 +51,17 @@ export function useSecurePreview(file: { id: string; workspaceId: string } | nul
         const message = err instanceof Error ? err.message : "Couldn't load the preview.";
         // The friendly message stays; in development the failing STEP is shown too (never a token, ticket or URL). The page never falls back to the permanent file URL.
         if (process.env.NODE_ENV !== "production") console.warn(`[useSecurePreview] ${code}: ${message}`);
-        setState({ url: null, isLoading: false, error: process.env.NODE_ENV !== "production" ? `${message} (${code})` : message });
+        setState({ url: null, isLoading: false, error: process.env.NODE_ENV !== "production" ? `${message} (${code})` : message, variant: null });
       }
     };
 
-    setState({ url: null, isLoading: true, error: null });
+    setState((s) => ({ ...s, url: null, isLoading: true, error: null }));
     void issue();
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [fileId, workspaceId]);
+  }, [fileId, workspaceId, forceOriginal]);
 
-  return state;
+  return { ...state, fallbackToOriginal: () => setForceOriginal(true) };
 }

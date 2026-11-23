@@ -1,5 +1,6 @@
 import { getDoc, getDocs, query, where } from "firebase/firestore";
-import { projectsCol, settingsDoc } from "@/lib/firebase/firestore";
+import { projectsCol, workspaceDoc } from "@/lib/firebase/firestore";
+import { holdsSeat } from "@/lib/entitlements";
 import { getWorkspaceMembers } from "@/services/userService";
 import { checkWorkspaceAIUsage } from "@/services/aiService";
 import { FeatureKey } from "@/lib/constants/planLimits";
@@ -48,8 +49,9 @@ export function canUseFeature(workspace: Workspace, feature: FeatureKey): boolea
 export async function getWorkspaceUsage(workspace: Workspace, metric: WorkspaceLimitMetric): Promise<number> {
   switch (metric) {
     case "members": {
+      // Seats are ACTIVE members (the shared holdsSeat rule). The authoritative count is the server's; this client count is only a pre-check.
       const members = await getWorkspaceMembers(workspace.id);
-      return members.length;
+      return members.filter((m) => holdsSeat(m, false)).length;
     }
     case "projects": {
       const q = query(projectsCol(), where("workspaceId", "==", workspace.id), where("isArchived", "==", false));
@@ -57,8 +59,9 @@ export async function getWorkspaceUsage(workspace: Workspace, metric: WorkspaceL
       return snapshot.docs.length;
     }
     case "storage": {
-      const snapshot = await getDoc(settingsDoc(workspace.id));
-      return snapshot.exists() ? snapshot.data().storage?.usedBytes ?? 0 : 0;
+      // The server-maintained counter is the only usage source (the legacy settings.storage.usedBytes copy is no longer written).
+      const wsSnap = await getDoc(workspaceDoc(workspace.id));
+      return (wsSnap.data() as { storageBytesUsed?: number } | undefined)?.storageBytesUsed ?? 0;
     }
     case "aiGenerations": {
       const usage = await checkWorkspaceAIUsage(workspace);

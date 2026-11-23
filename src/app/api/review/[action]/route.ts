@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { signOriginalDownloadUrl } from "@/lib/server/directDownload";
+import { downloadEventId, recordDownloadStarted } from "@/lib/server/downloadHistory";
 import { randomBytes, randomInt, timingSafeEqual } from "crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/server/firebaseAdmin";
@@ -384,12 +386,28 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (limited) return limited;
     const scoped = await resolveScopedFile(share, file, body.version);
     if (!scoped || !scoped.storagePath.startsWith(`workspaces/${share.workspaceId}/`)) return bad("That version isn't available.", "permission_denied", 403);
+    // DIRECT download for an external reviewer: the SAME gate has already run (valid, unrevoked, unexpired link; password/email gates via the session; the link's
+    // canDownload permission; the requested version inside the share's scope). The URL is for ONE original object and lives 60 s — shorter than a member's —
+    // because, unlike the ticket below, it can't be re-checked at redemption. A revoked/expired link is refused at the NEXT request here, never reused.
+    const directUrl = await signOriginalDownloadUrl(scoped.storagePath, scoped.fileName, scoped.contentType, 60_000);
+
+    // HISTORY POLICY for external reviewers: an AUDIT event is recorded in the reserved `_external` bucket (readable by no signed-in user's client, shown in no member's
+    // personal Downloads list). It carries the file/version and the link id but NO internal user data and no reviewer e-mail/name — only the opaque session-scoped
+    // reviewer id is mixed into the dedupe key. Status "started" for a direct URL (not "completed": the server can't see the bytes); proxied downloads are resolved by the GET.
+    const downloadId = downloadEventId(`ext:${session.reviewerId}`, `share:${share.id}:${scoped.id}`, typeof body.requestId === "string" ? body.requestId : null, Date.now());
+    await recordDownloadStarted({
+      id: downloadId, actorType: "external", uid: null, workspaceId: share.workspaceId, projectId: share.projectId, kind: "file", fileId: scoped.id ?? null,
+      assetGroupId: share.assetGroupId ?? null, versionNumber: typeof scoped.versionNumber === "number" ? scoped.versionNumber : null, fileName: scoped.fileName,
+      sizeBytes: null, method: directUrl ? "direct" : "proxy",
+    });
+    if (directUrl) return NextResponse.json({ url: directUrl, direct: true, fileName: scoped.fileName, expiresInSeconds: 60, downloadId });
+
     const ticket = randomBytes(24).toString("hex");
     await db.collection("download_tickets").doc(ticket).set({
-      uid: actor.uid, shareId: share.id, workspaceId: share.workspaceId, projectId: share.projectId,
+      uid: actor.uid, shareId: share.id, workspaceId: share.workspaceId, projectId: share.projectId, downloadId,
       storagePath: scoped.storagePath, fileName: scoped.fileName, contentType: scoped.contentType, expiresAt: Date.now() + 60_000, expireAt: expireAt(Date.now() + 60_000),
     });
-    return NextResponse.json({ ticket, fileName: scoped.fileName });
+    return NextResponse.json({ ticket, fileName: scoped.fileName, downloadId });
   }
 
   return bad("Unknown action.", "bad_request", 404);

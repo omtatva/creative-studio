@@ -1,14 +1,13 @@
 "use client";
 
-import { useWorkspaceSettings } from "@/hooks/useWorkspaceSettings";
-import { effectiveMaxFileBytes } from "@/lib/constants/creativeFiles";
+import { useEntitlements } from "@/contexts/EntitlementsContext";
+import type { UploadPolicy } from "@/lib/constants/creativeFiles";
 
 /**
- * The per-file upload limit for the active workspace, live: the owner/admin's setting from Settings > Storage (realtime), capped by the
- * platform ceiling. A change saved there applies to the next upload immediately. The server re-enforces it in /api/files/finalize, so this
- * is only the fast, friendly pre-check.
+ * What an upload in the active workspace is checked against, live: the resolved per-file limit and the storage the workspace has left — both from the one
+ * entitlement policy (EntitlementsContext), never a constant. A change a Super Admin saves, or the owner's own per-file choice, applies to the very next
+ * upload. The server re-checks it all (/api/files/finalize, quota reservation), so this is only the fast, friendly pre-check.
  */
-export function useUploadLimit(): number {
-  const { settings } = useWorkspaceSettings();
-  return effectiveMaxFileBytes(settings?.storage?.maxFileSizeMb);
+export function useUploadLimit(): UploadPolicy {
+  return useEntitlements().uploadPolicy;
 }

@@ -19,6 +19,7 @@ import { deleteFile, projectCoverRef, uploadFile } from "@/lib/firebase/storage"
 import { logActivity } from "@/services/activityService";
 import { getOrCreateDefaultStage } from "@/services/stageService";
 import { notifyEvent } from "@/services/notificationService";
+import { getFixedClassSizeError } from "@/lib/constants/uploadPolicy";
 import {
   CreateProjectPayload,
   Project,
@@ -146,6 +147,8 @@ export async function createProject({ workspaceId, owner, payload }: CreateProje
 
   if (payload.coverImageFile) {
     try {
+      const coverSizeError = getFixedClassSizeError("project_cover", payload.coverImageFile);
+      if (coverSizeError) throw new Error(coverSizeError);
       const coverRef = projectCoverRef(workspaceId, projectId, payload.coverImageFile.name);
       const coverImageUrl = await uploadFile(coverRef, payload.coverImageFile);
       await updateDoc(projectDoc(projectId), { coverImageUrl, updatedAt: serverTimestamp() });

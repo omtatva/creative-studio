@@ -2,39 +2,48 @@
 
 import { useEffect, useState } from "react";
 import { SettingsSection } from "@/components/settings/SettingsSection";
-import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
-import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Loader } from "@/components/ui/Loader";
 import { TagsInput } from "@/components/projects/TagsInput";
 import { useWorkspaceSettings } from "@/hooks/useWorkspaceSettings";
 import { useToast } from "@/hooks/useToast";
 import { DEFAULT_SECURITY_SETTINGS } from "@/lib/constants/settingsDefaults";
-import { SecuritySettings } from "@/types/settings.types";
 
+const DOMAIN_PATTERN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/;
+const normalizeDomain = (value: string) => value.trim().toLowerCase().replace(/^@/, "");
+
+/**
+ * Security. Only what is actually enforced is editable here: the allowed email domains, which /api/invites/accept applies on the server at the
+ * moment someone tries to join. Two-factor, session timeout and password rules are NOT enforced per workspace (sign-in is handled by the
+ * platform's authentication, shared across every workspace a person belongs to), so they are shown as information rather than as switches
+ * that would look like they protect something.
+ */
 export default function SecuritySettingsPage() {
   const { settings, isLoading, isSaving, save } = useWorkspaceSettings();
   const toast = useToast();
-  const [draft, setDraft] = useState<SecuritySettings>(DEFAULT_SECURITY_SETTINGS);
+  const [domains, setDomains] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  const saved = settings?.security?.allowedEmailDomains ?? [];
   useEffect(() => {
-    if (settings) setDraft(settings.security ?? DEFAULT_SECURITY_SETTINGS);
+    if (settings) setDomains(settings.security?.allowedEmailDomains ?? []);
   }, [settings]);
 
+  const dirty = JSON.stringify(domains) !== JSON.stringify(saved);
+
   async function handleSave() {
-    if (draft.sessionTimeoutMinutes < 5 || draft.sessionTimeoutMinutes > 1440) {
-      setError("Session timeout must be between 5 and 1440 minutes");
-      return;
-    }
-    if (draft.passwordPolicy.minLength < 6) {
-      setError("Minimum password length must be at least 6");
+    const cleaned = Array.from(new Set(domains.map(normalizeDomain).filter(Boolean)));
+    const invalid = cleaned.find((d) => !DOMAIN_PATTERN.test(d));
+    if (invalid) {
+      setError(`"${invalid}" isn't a valid domain. Use a form like company.com.`);
       return;
     }
     setError(null);
     try {
-      await save({ security: draft });
-      toast.success("Security settings saved");
+      // Keep every other stored security value exactly as it is — only the allowed domains change here.
+      await save({ security: { ...DEFAULT_SECURITY_SETTINGS, ...(settings?.security ?? {}), allowedEmailDomains: cleaned } });
+      setDomains(cleaned);
+      toast.success("Allowed email domains saved");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't save settings");
     }
@@ -46,65 +55,25 @@ export default function SecuritySettingsPage() {
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-xl font-semibold text-foreground">Security</h1>
-        <p className="mt-1 text-sm text-foreground-muted">Password policy, sessions, and two-factor authentication.</p>
+        <p className="mt-1 text-sm text-foreground-muted">Who is allowed to join this workspace.</p>
       </div>
 
       {error && <p className="text-sm text-red-500">{error}</p>}
 
       <SettingsSection
-        title="Two-factor authentication"
-        action={<Button size="sm" onClick={handleSave} isLoading={isSaving}>Save changes</Button>}
+        title="Allowed email domains"
+        description="When set, people can only join this workspace with an email at one of these domains. Leave empty to allow any domain. Checked when an invitation is accepted; people who are already members are not affected."
+        action={<Button size="sm" onClick={handleSave} isLoading={isSaving} disabled={!dirty}>Save changes</Button>}
       >
-        <ToggleSwitch
-          checked={draft.twoFactorRequired}
-          onChange={(v) => setDraft({ ...draft, twoFactorRequired: v })}
-          label="Require 2FA for all members"
-          description="Members will be prompted to set up two-factor authentication on next login"
-        />
+        <TagsInput value={domains} onChange={setDomains} placeholder="company.com, then Enter" />
       </SettingsSection>
 
-      <SettingsSection title="Sessions">
-        <Input
-          label="Session timeout (minutes)"
-          type="number"
-          min={5}
-          max={1440}
-          value={draft.sessionTimeoutMinutes}
-          onChange={(e) => setDraft({ ...draft, sessionTimeoutMinutes: Number(e.target.value) })}
-          hint="Members are signed out after this many minutes of inactivity"
-        />
-      </SettingsSection>
-
-      <SettingsSection title="Password policy">
-        <div className="flex flex-col gap-4">
-          <Input
-            label="Minimum length"
-            type="number"
-            min={6}
-            max={64}
-            value={draft.passwordPolicy.minLength}
-            onChange={(e) => setDraft({ ...draft, passwordPolicy: { ...draft.passwordPolicy, minLength: Number(e.target.value) } })}
-          />
-          <ToggleSwitch
-            checked={draft.passwordPolicy.requireUppercase}
-            onChange={(v) => setDraft({ ...draft, passwordPolicy: { ...draft.passwordPolicy, requireUppercase: v } })}
-            label="Require an uppercase letter"
-          />
-          <ToggleSwitch
-            checked={draft.passwordPolicy.requireNumber}
-            onChange={(v) => setDraft({ ...draft, passwordPolicy: { ...draft.passwordPolicy, requireNumber: v } })}
-            label="Require a number"
-          />
-          <ToggleSwitch
-            checked={draft.passwordPolicy.requireSymbol}
-            onChange={(v) => setDraft({ ...draft, passwordPolicy: { ...draft.passwordPolicy, requireSymbol: v } })}
-            label="Require a symbol"
-          />
-        </div>
-      </SettingsSection>
-
-      <SettingsSection title="Allowed email domains" description="Leave empty to allow any email domain to sign up.">
-        <TagsInput value={draft.allowedEmailDomains} onChange={(domains) => setDraft({ ...draft, allowedEmailDomains: domains })} placeholder="company.com, then Enter" />
+      <SettingsSection title="Sign-in security" description="Managed by the platform, not per workspace.">
+        <ul className="flex flex-col gap-2 text-sm text-foreground-muted">
+          <li>Everyone must verify their email address before they can accept an invitation (enforced).</li>
+          <li>Passwords and sessions are handled by the platform&apos;s sign-in system and are the same in every workspace a person belongs to.</li>
+          <li>Per-workspace two-factor authentication, session timeouts and password rules are not available yet.</li>
+        </ul>
       </SettingsSection>
     </div>
   );

@@ -30,6 +30,11 @@ export interface WorkspacePlanLimits {
   maxStorageBytes: number;
   maxAIRequestsPerMonth: number;
   enabledFeatures: string[];
+  /**
+   * Per-FILE size ENTITLEMENT in bytes (not the workspace owner's own choice — that is settings.storage.maxFileSizeMb). Absent on every plan:
+   * the platform safety ceiling applies. A plan or a Super Admin override can set it; it can only LOWER the ceiling for that workspace.
+   */
+  maxFileEntitlementBytes?: number;
 }
 
 export interface Workspace extends Timestamps {
@@ -88,6 +93,8 @@ export interface Workspace extends Timestamps {
    */
   projectCount?: number;
   memberCount?: number;
+  /** Authoritative storage usage in bytes (same protection as the counters above). */
+  storageBytesUsed?: number;
 }
 
 export type MemberRole = "owner" | "admin" | "member" | "viewer";

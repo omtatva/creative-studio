@@ -16,6 +16,7 @@ import {
 } from "@/lib/reviewRounds";
 import { formatDate, timeAgo } from "@/lib/utils/date";
 import { cn } from "@/lib/utils/cn";
+import { useWorkspaceSettings } from "@/hooks/useWorkspaceSettings";
 import type { ProjectFile } from "@/types/file.types";
 import type { Review } from "@/types/review.types";
 
@@ -112,6 +113,8 @@ export function ReviewRoundPanel({ workspaceId, asset, rounds, currentUid, selec
   const [showHistory, setShowHistory] = useState(false);
   const [managing, setManaging] = useState(false);
   const [note, setNote] = useState("");
+  const { settings: workspaceSettings } = useWorkspaceSettings();
+  const noteRequiredForChanges = !!workspaceSettings?.reviewDefaults?.requireCommentOnChangesRequested;
   const [busy, setBusy] = useState(false);
   const [addUid, setAddUid] = useState("");
   const [caps, setCaps] = useState<{ isReviewer: boolean; canDecide: boolean; canManage: boolean } | null>(null);
@@ -244,7 +247,7 @@ export function ReviewRoundPanel({ workspaceId, asset, rounds, currentUid, selec
           <input
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="Add a note (optional)"
+            placeholder={noteRequiredForChanges ? "Add a note (required to request changes)" : "Add a note (optional)"}
             maxLength={2000}
             className="h-9 w-full rounded-theme border border-border bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
           />

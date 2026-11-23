@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
-import { Readable } from "stream";
 import { verifyRequestAuth, AuthVerificationError, adminDb, adminStorage } from "@/lib/server/firebaseAdmin";
 import { enforceRateLimit, RateLimitExceededError } from "@/lib/server/rateLimit";
 import { resolveProjectAccess } from "@/lib/server/projectAccess";
@@ -8,21 +7,31 @@ import { isFeatureAllowed, featureDisabledBody } from "@/lib/server/featureAcces
 import type { MemberRole } from "@/types/workspace.types";
 import { shareAllowsDownload } from "@/lib/server/reviewShare";
 import { expireAt } from "@/lib/server/ttl";
+import { signOriginalDownloadUrl, DIRECT_URL_TTL_MS, contentDisposition } from "@/lib/server/directDownload";
+import { downloadEventId, recordDownloadStarted, resolveDownload, EXTERNAL_BUCKET } from "@/lib/server/downloadHistory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const TICKET_TTL_MS = 60_000;
 
+
 type DownloadRequest =
-  | { kind: "file"; workspaceId: string; fileId: string }
-  | { kind: "attachment"; workspaceId: string; taskId: string; attachmentId: string; versionNumber?: number };
+  | { kind: "file"; workspaceId: string; fileId: string; requestId?: string }
+  | { kind: "attachment"; workspaceId: string; taskId: string; attachmentId: string; versionNumber?: number; requestId?: string };
 
 interface Target {
   projectId: string;
   storagePath: string;
   fileName: string;
   contentType: string;
+  /** for download history */
+  fileId: string | null;
+  taskId: string | null;
+  attachmentId: string | null;
+  assetGroupId: string | null;
+  versionNumber: number | null;
+  sizeBytes: number | null;
 }
 
 /** The one place a downloadable object is resolved from a real record — never from a client-supplied path or URL. */
@@ -31,7 +40,11 @@ async function resolveTarget(req: DownloadRequest): Promise<Target | { error: st
     const snap = await adminDb().collection("files").doc(req.fileId).get();
     const file = snap.data();
     if (!snap.exists || !file || file.workspaceId !== req.workspaceId) return { error: "This file is no longer available.", status: 404 };
-    return { projectId: file.projectId, storagePath: file.storagePath, fileName: file.fileName, contentType: file.contentType };
+    return {
+      projectId: file.projectId, storagePath: file.storagePath, fileName: file.fileName, contentType: file.contentType,
+      fileId: req.fileId, taskId: null, attachmentId: null, assetGroupId: file.assetGroupId ?? null,
+      versionNumber: typeof file.versionNumber === "number" ? file.versionNumber : null, sizeBytes: typeof file.sizeBytes === "number" ? file.sizeBytes : null,
+    };
   }
   const taskSnap = await adminDb().collection("tasks").doc(req.taskId).get();
   const task = taskSnap.data();
@@ -41,7 +54,10 @@ async function resolveTarget(req: DownloadRequest): Promise<Target | { error: st
   if (!attSnap.exists || !attachment) return { error: "This file is no longer available.", status: 404 };
   const version = req.versionNumber ? attachment.versions.find((v) => v.versionNumber === req.versionNumber) : attachment.versions[attachment.versions.length - 1];
   if (!version) return { error: "That version doesn't exist.", status: 404 };
-  return { projectId: task.projectId, storagePath: version.storagePath, fileName: attachment.fileName, contentType: attachment.contentType };
+  return {
+    projectId: task.projectId, storagePath: version.storagePath, fileName: attachment.fileName, contentType: attachment.contentType,
+    fileId: null, taskId: req.taskId, attachmentId: req.attachmentId, assetGroupId: null, versionNumber: version.versionNumber, sizeBytes: null,
+  };
 }
 
 /**
@@ -105,6 +121,22 @@ export async function POST(request: NextRequest) {
   const [exists] = await adminStorage().file(target.storagePath).exists();
   if (!exists) return NextResponse.json({ error: "This file is no longer available." }, { status: 404 });
 
+  // DIRECT download (default): a short-lived signed GCS URL for this ONE original object (authorization was just verified above). Falls back to the ticketed,
+  // proxied stream below when signing is unavailable. Kill switch: DIRECT_DOWNLOADS=0. See lib/server/directDownload.ts.
+  const directUrl = await signOriginalDownloadUrl(target.storagePath, target.fileName, target.contentType);
+
+  // DOWNLOAD HISTORY: only now — after authentication, project access, the files.download permission and the existence check have all passed — is an event recorded.
+  // Status "started": issuing a URL/ticket is NOT a completed download. A direct download stays "started" (the server can't see the bytes); a proxied one is resolved to
+  // completed / cancelled / failed / expired by the streaming GET below.
+  const targetKey = body.kind === "file" ? `file:${body.fileId}` : `att:${body.taskId}/${body.attachmentId}/${target.versionNumber}`;
+  const downloadId = downloadEventId(uid, targetKey, body.requestId, Date.now());
+  await recordDownloadStarted({
+    id: downloadId, actorType: "member", uid, workspaceId: body.workspaceId, projectId: target.projectId, kind: body.kind,
+    fileId: target.fileId, taskId: target.taskId, attachmentId: target.attachmentId, assetGroupId: target.assetGroupId,
+    versionNumber: target.versionNumber, fileName: target.fileName, sizeBytes: target.sizeBytes, method: directUrl ? "direct" : "proxy",
+  });
+  if (directUrl) return NextResponse.json({ url: directUrl, direct: true, fileName: target.fileName, expiresInSeconds: DIRECT_URL_TTL_MS / 1000, downloadId });
+
   const ticket = randomBytes(24).toString("hex");
   await adminDb().collection("download_tickets").doc(ticket).set({
     uid,
@@ -113,10 +145,11 @@ export async function POST(request: NextRequest) {
     storagePath: target.storagePath,
     fileName: target.fileName,
     contentType: target.contentType,
+    downloadId,
     expiresAt: Date.now() + TICKET_TTL_MS,
     expireAt: expireAt(Date.now() + TICKET_TTL_MS),
   });
-  return NextResponse.json({ ticket, fileName: target.fileName });
+  return NextResponse.json({ ticket, fileName: target.fileName, downloadId });
 }
 
 const safeAsciiName = (name: string) => name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\/;]/g, "_").slice(0, 180) || "download";
@@ -137,33 +170,71 @@ export async function GET(request: NextRequest) {
     const snap = await tx.get(ref);
     if (!snap.exists) return null;
     tx.delete(ref); // single use, valid or not
-    return snap.data() as { uid: string; workspaceId: string; projectId: string; storagePath: string; fileName: string; contentType: string; expiresAt: number; shareId?: string };
+    return snap.data() as { uid: string; workspaceId: string; projectId: string; storagePath: string; fileName: string; contentType: string; expiresAt: number; shareId?: string; downloadId?: string };
   });
-  if (!ticket || ticket.expiresAt < Date.now()) return NextResponse.json({ error: "This download link has expired. Try again." }, { status: 410 });
+  // History bucket of this ticket's event (external reviewers' events live in the reserved bucket, never under a member's feed).
+  const bucketKey = ticket ? (ticket.shareId ? EXTERNAL_BUCKET : ticket.uid) : "";
+  const settle = (status: "completed" | "cancelled" | "failed" | "expired", reason: string | null) =>
+    ticket?.downloadId ? resolveDownload(ticket.workspaceId, bucketKey, ticket.downloadId, status, reason) : Promise.resolve(false);
+  if (!ticket || ticket.expiresAt < Date.now()) {
+    await settle("expired", "ticket_expired");
+    return NextResponse.json({ error: "This download link has expired. Try again." }, { status: 410 });
+  }
 
   if (ticket.shareId) {
     // An EXTERNAL REVIEWER's ticket (see /api/review/download): authorized by the share, not by
     // workspace/project membership. Re-checked at redemption, so a link revoked/expired (or whose
     // download permission was switched off) in the last minute is refused.
     if (!(await shareAllowsDownload(ticket.shareId))) {
+      await settle("failed", "access_revoked");
       return NextResponse.json({ error: "This download isn't available." }, { status: 403 });
     }
   } else {
     const auth = await authorize(ticket.uid, ticket.workspaceId, ticket.projectId);
-    if (!auth.ok) return auth.response;
+    if (!auth.ok) {
+      await settle("failed", "access_revoked");
+      return auth.response;
+    }
   }
 
   const file = adminStorage().file(ticket.storagePath);
   const [exists] = await file.exists();
-  if (!exists) return NextResponse.json({ error: "This file is no longer available." }, { status: 404 });
+  if (!exists) {
+    await settle("failed", "missing");
+    return NextResponse.json({ error: "This file is no longer available." }, { status: 404 });
+  }
   const [metadata] = await file.getMetadata();
 
   const headers = new Headers({
     "Content-Type": ticket.contentType || "application/octet-stream",
-    "Content-Disposition": `attachment; filename="${safeAsciiName(ticket.fileName)}"; filename*=UTF-8''${encodeURIComponent(ticket.fileName)}`,
+    "Content-Disposition": contentDisposition(ticket.fileName),
     "Cache-Control": "private, no-store",
     "X-Content-Type-Options": "nosniff",
   });
   if (metadata.size) headers.set("Content-Length", String(metadata.size));
-  return new Response(Readable.toWeb(file.createReadStream()) as ReadableStream, { headers });
+  // Stream by hand so the OUTCOME is observable: "completed" only when every byte of the object was delivered (count == object size); a client that goes away mid-stream
+  // is "cancelled"; a broken read is "failed".
+  const expectedBytes = metadata.size ? Number(metadata.size) : null;
+  const source = file.createReadStream();
+  let sent = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      source.on("data", (chunk: Buffer) => {
+        sent += chunk.length;
+        controller.enqueue(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.length));
+        if ((controller.desiredSize ?? 1) <= 0) source.pause();
+      });
+      source.on("end", () => {
+        controller.close();
+        void (expectedBytes === null || sent === expectedBytes ? settle("completed", null) : settle("failed", "short_read"));
+      });
+      source.on("error", (err) => {
+        controller.error(err);
+        void settle("failed", "stream_error");
+      });
+    },
+    pull() { source.resume(); },
+    cancel() { source.destroy(); void settle("cancelled", "client_closed"); },
+  });
+  return new Response(stream, { headers });
 }

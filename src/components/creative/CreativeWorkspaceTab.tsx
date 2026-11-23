@@ -12,7 +12,8 @@ import { AssetListRow } from "./AssetListRow";
 import { StageCard } from "./StageCard";
 import { StageFormModal } from "./StageFormModal";
 import { CreativeUploadZone } from "./CreativeUploadZone";
-import { UploadProgressList, type UploadQueueItem } from "./UploadProgressList";
+import { UploadProgressList } from "./UploadProgressList";
+import { useProjectUploads, useUploads } from "@/contexts/UploadContext";
 import { ConfirmModal } from "@/components/shared/ConfirmModal";
 import { useFiles } from "@/hooks/useFiles";
 import { useStages } from "@/hooks/useStages";
@@ -70,7 +71,9 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [isStageFormOpen, setIsStageFormOpen] = useState(false);
   const [isTemplateFormOpen, setIsTemplateFormOpen] = useState(false);
-  const [queue, setQueue] = useState<UploadQueueItem[]>([]);
+  // Uploads live in the app-level upload manager (not in this component), so the same rows are here again after navigating away and back.
+  const uploadManager = useUploads();
+  const projectUploads = useProjectUploads(project?.workspaceId, projectId);
   const [archiveTarget, setArchiveTarget] = useState<Stage | null>(null);
   // Deleting an UPLOADED asset (a wrong video, an accidental duplicate): every version of it, after confirmation.
   const [deleteAssetTarget, setDeleteAssetTarget] = useState<AssetGroup | null>(null);
@@ -138,10 +141,6 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
   const stagePendingCount = (stageId: string) => groups.filter((g) => g.latest.stageId === stageId && g.latest.reviewStatus === "pending_review").length;
   const stageApprovedCount = (stageId: string) => groups.filter((g) => g.latest.stageId === stageId && g.latest.reviewStatus === "approved").length;
 
-  function updateQueueItem(id: string, patch: Partial<UploadQueueItem>) {
-    setQueue((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
-  }
-
   // Each stage is its own accordion row — clicking one expands its upload
   // zone + assets directly beneath it (see the render below), so the
   // expanded stage IS the upload target. There's no "All stages" view left
@@ -163,39 +162,34 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
     // grid instead, since there's no single obvious file to jump into.
     const jumpToReviewOnSuccess = fileList.length === 1;
 
-    for (const file of fileList) {
-      const id = crypto.randomUUID();
+    if (!project) {
+      toast.error("Project is still loading — try again in a moment.");
+      return;
+    }
 
+    for (const file of fileList) {
       const validationError = getUploadValidationError(file, maxFileBytes);
       if (validationError) {
-        setQueue((prev) => [...prev, { id, file, status: "error", progress: 0, error: validationError }]);
         toast.error(validationError);
         continue;
       }
 
-      setQueue((prev) => [...prev, { id, file, status: "uploading", progress: 0 }]);
-
-      try {
-        const fileId = await fileActions.uploadWithProgress(
-          projectId,
-          file,
-          (percent) => updateQueueItem(id, { progress: percent }),
-          { stageId: uploadTargetStageId }
-        );
-        if (fileId) {
-          updateQueueItem(id, { status: "success", progress: 100 });
-          if (jumpToReviewOnSuccess) {
-            router.push(fileReviewRoute(projectId, uploadTargetStageId, fileId));
+      // Hand the file to the app-level upload manager and return immediately: it keeps uploading (and finalizes into THIS project's workspace)
+      // even if you leave this page, and the row below / the navbar indicator show it.
+      const stageId = uploadTargetStageId;
+      const started = uploadManager.start({
+        workspaceId: project.workspaceId,
+        projectId,
+        stageId,
+        file,
+        onSuccess: (fileId) => {
+          // Only jump into the review workspace if the person is still on this project — never yank them off another page.
+          if (jumpToReviewOnSuccess && window.location.pathname.startsWith(`/projects/${projectId}`)) {
+            router.push(fileReviewRoute(projectId, stageId, fileId));
           }
-        } else {
-          updateQueueItem(id, { status: "error", error: "No active workspace found." });
-          toast.error(`"${file.name}" failed to upload: no active workspace found.`);
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Upload failed";
-        updateQueueItem(id, { status: "error", error: message });
-        toast.error(`"${file.name}" failed to upload: ${message}`);
-      }
+        },
+      });
+      if (!started) toast.error("You must be signed in to upload.");
     }
   }
 
@@ -342,9 +336,7 @@ export function CreativeWorkspaceTab({ projectId }: { projectId: string }) {
 
                     <CreativeUploadZone onFiles={handleFiles} disabled={!canUpload} disabledMessage="Uploading files isn't enabled for your role." />
 
-                    {queue.length > 0 && (
-                      <UploadProgressList items={queue} onDismiss={(id) => setQueue((prev) => prev.filter((q) => q.id !== id))} />
-                    )}
+                    {projectUploads.length > 0 && <UploadProgressList items={projectUploads} />}
 
                     <div className="flex flex-wrap items-center gap-2">
                       <div className="relative min-w-[200px] flex-1">

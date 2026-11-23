@@ -39,6 +39,7 @@ export default function TaskSettingsPage() {
       await save({ taskOptions: next });
       toast.success("Task settings saved");
     } catch (err) {
+      setOptions(settings?.taskOptions ?? DEFAULT_TASK_OPTIONS); // not saved — show what is really stored
       toast.error(err instanceof Error ? err.message : "Couldn't save");
     }
   }
@@ -49,6 +50,7 @@ export default function TaskSettingsPage() {
       await save({ taskDefaults: next });
       toast.success("Task settings saved");
     } catch (err) {
+      setDefaults(settings?.taskDefaults ?? DEFAULT_TASK_DEFAULT_SETTINGS); // not saved — show what is really stored
       toast.error(err instanceof Error ? err.message : "Couldn't save");
     }
   }
@@ -111,13 +113,12 @@ export default function TaskSettingsPage() {
             <label className="mb-1.5 block text-sm font-medium text-foreground">Default priority</label>
             <select
               value={defaults.defaultPriority}
-              onChange={(e) => persistDefaults({ ...defaults, defaultPriority: e.target.value as TaskDefaultSettings["defaultPriority"] })}
+              onChange={(e) => persistDefaults({ ...defaults, defaultPriority: e.target.value })}
               className="h-10 w-full max-w-xs rounded-theme border border-border bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
             >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="urgent">Urgent</option>
+              {options.priorities.map((p) => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
             </select>
           </div>
 

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
-import { verifyRequestAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
+import { verifyRequestAuth, AuthVerificationError, adminAuth, adminDb } from "@/lib/server/firebaseAdmin";
 import { reserveSlot, resyncSlotCount, WorkspaceQuotaError } from "@/lib/server/workspaceQuota";
+import { isPlatformSuperAdmin } from "@/lib/server/seats";
 
 export const runtime = "nodejs";
 
@@ -69,11 +70,38 @@ export async function POST(request: NextRequest) {
 
   const { workspaceId, role } = invite;
 
+  // An invitation is addressed to an EMAIL ADDRESS, so it can only be claimed by someone who has proven they own it. Re-read the auth
+  // record (the ID token's own email_verified claim can be up to an hour stale) — an unverified account that merely typed this address
+  // at sign-up must not be able to join the workspace.
   try {
-    await reserveSlot(workspaceId, "member");
+    const authUser = await adminAuth().getUser(uid);
+    if (!authUser.emailVerified) {
+      return NextResponse.json({ error: "Verify your email address first (check your inbox for the verification link), then accept this invitation.", code: "EMAIL_NOT_VERIFIED" }, { status: 403 });
+    }
+  } catch (err) {
+    console.error("[invites/accept] couldn't read the auth record:", err);
+    return NextResponse.json({ error: "Couldn't verify your email address. Try again in a moment." }, { status: 503 });
+  }
+
+  // The workspace's own "Allowed email domains" security setting (empty = anyone). Enforced here, on the server, at the moment of joining.
+  const settingsSnap = await adminDb().collection("settings").doc(workspaceId).get();
+  const allowedDomains: string[] = (settingsSnap.data()?.security?.allowedEmailDomains ?? []).filter((d: unknown): d is string => typeof d === "string" && d.trim().length > 0).map((d: string) => d.trim().toLowerCase().replace(/^@/, ""));
+  if (allowedDomains.length > 0 && !allowedDomains.includes(email.trim().toLowerCase().split("@").pop() ?? "")) {
+    return NextResponse.json({ error: `This workspace only accepts members with an email at: ${allowedDomains.join(", ")}.`, code: "EMAIL_DOMAIN_NOT_ALLOWED" }, { status: 403 });
+  }
+
+  try {
+    // Seats are ACTIVE members only. The counter is re-synced to the real active count first, so a value left over from before disabled members stopped
+    // holding seats can't wrongly refuse (or allow) this acceptance; the reservation itself is still the atomic check.
+    if (!(await isPlatformSuperAdmin(uid))) {
+      await resyncSlotCount(workspaceId, "member").catch(() => undefined);
+      await reserveSlot(workspaceId, "member");
+    }
   } catch (err) {
     if (err instanceof WorkspaceQuotaError) {
-      return NextResponse.json({ error: err.message, code: err.code }, { status: 403 });
+      // The seat limit is re-checked atomically HERE, at acceptance, regardless of how many invitations were sent earlier.
+      const code = err.code === "MEMBER_LIMIT_REACHED" ? "WORKSPACE_MEMBER_LIMIT_REACHED" : err.code;
+      return NextResponse.json({ error: err.message, code }, { status: 403 });
     }
     console.error("[invites/accept] quota reservation failed:", err);
     return NextResponse.json({ error: "Couldn't verify this workspace's member quota. Try again in a moment.", code: "SUBSCRIPTION_INACTIVE" }, { status: 503 });

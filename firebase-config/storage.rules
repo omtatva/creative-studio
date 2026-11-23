@@ -153,7 +153,7 @@ service firebase.storage {
     // Content-type/size allow-lists mirror the app's OWN existing
     // client-side validation exactly (see
     // lib/constants/creativeFiles.ts's SUPPORTED_CREATIVE_MIME_TYPES/
-    // MAX_UPLOAD_SIZE_BYTES and brandingService.ts's
+    // PLATFORM_MAX_FILE_BYTES / UPLOAD_CLASSES in lib/constants/uploadPolicy.ts and brandingService.ts's
     // ALLOWED_IMAGE_TYPES/MAX_BRANDING_IMAGE_BYTES) — real enforcement
     // of limits already established client-side, not new, narrower
     // ones invented here that could reject something the app itself
@@ -167,12 +167,12 @@ service firebase.storage {
     function isAllowedBrandingUpload() {
       return request.resource.contentType in
           ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml', 'image/gif']
-        && request.resource.size < 5 * 1024 * 1024;
+        && request.resource.size < 5 * 1024 * 1024; // fixed class ceiling — mirrors UPLOAD_CLASSES.branding (src/lib/constants/uploadPolicy.ts)
     }
 
     function isAllowedCoverUpload() {
       return (request.resource.contentType.matches('image/.*') || request.resource.contentType == 'application/octet-stream')
-        && request.resource.size < 10 * 1024 * 1024;
+        && request.resource.size < 10 * 1024 * 1024; // fixed class ceiling — mirrors UPLOAD_CLASSES.project_cover
     }
 
     // cover-{fileName} (projectCoverRef) and files/{fileId}/{fileName}
@@ -203,7 +203,7 @@ service firebase.storage {
           || request.resource.contentType == 'application/octet-stream'
           || request.resource.contentType == ''
         )
-        && request.resource.size <= 100 * 1024 * 1024 * 1024; // 100 GB — mirrors MAX_UPLOAD_SIZE_BYTES
+        && request.resource.size <= 100 * 1024 * 1024 * 1024; // PLATFORM SAFETY CEILING (100 GB) — mirrors PLATFORM_MAX_FILE_BYTES in src/lib/constants/uploadPolicy.ts. NOT a business entitlement: a workspace's real per-file/total-storage/seat limits come from the entitlement resolver (plan -> Super Admin override -> workspace choice) and are enforced by /api/files/finalize + the quota functions. Rules cannot read that policy, so this is only the outer fence if app logic fails.
     }
 
     // Task attachments have no established client-side type allow-list
@@ -219,7 +219,7 @@ service firebase.storage {
           'application/x-msi', 'application/vnd.microsoft.portable-executable',
           'application/java-archive', 'application/x-elf'
         ])
-        && request.resource.size <= 500 * 1024 * 1024;
+        && request.resource.size <= 500 * 1024 * 1024; // fixed class ceiling — mirrors UPLOAD_CLASSES.task_attachment
     }
 
     match /workspaces/{workspaceId}/branding/{allPaths=**} {

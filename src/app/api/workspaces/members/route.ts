@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { verifySuperAdminAuth, AuthVerificationError, adminAuth, adminDb } from "@/lib/server/firebaseAdmin";
 import { enforceRateLimit, RateLimitExceededError } from "@/lib/server/rateLimit";
-import { resyncSlotCount } from "@/lib/server/workspaceQuota";
+import { reserveSlot, resyncSlotCount, WorkspaceQuotaError } from "@/lib/server/workspaceQuota";
+import { isPlatformSuperAdmin } from "@/lib/server/seats";
 import { logPlatformAudit } from "@/lib/server/platformAudit";
 
 export const runtime = "nodejs";
@@ -80,7 +81,7 @@ export async function POST(request: NextRequest) {
   if (!memberSnap.exists) {
     return NextResponse.json({ error: "Member not found in this workspace." }, { status: 404 });
   }
-  const member = memberSnap.data() as { role?: string; displayName?: string };
+  const member = memberSnap.data() as { role?: string; displayName?: string; status?: string };
   if (member.role === "owner") {
     return NextResponse.json({ error: "A workspace's owner can't be changed, disabled, or removed here." }, { status: 403 });
   }
@@ -90,7 +91,34 @@ export async function POST(request: NextRequest) {
     await memberRef.update({ role: body.role, updatedAt: FieldValue.serverTimestamp() });
     summary = `changed ${member.displayName ?? "a member"}'s role to ${body.role}`;
   } else if (action === "set_disabled") {
-    await memberRef.update({ status: body.disabled ? "suspended" : "active", updatedAt: FieldValue.serverTimestamp() });
+    const wasSuspended = member.status === "suspended";
+    if (body.disabled === false && wasSuspended) {
+      // RE-ENABLING takes a seat back, so capacity is re-checked atomically exactly like a new member joining — a disabled member can never be
+      // used to get around the seat entitlement. The counter is first re-synced to the real active count so a stale value can't wrongly allow or block it.
+      const seatExempt = await isPlatformSuperAdmin(uid);
+      if (!seatExempt) await resyncSlotCount(workspaceId, "member").catch(() => undefined);
+      try {
+        if (!seatExempt) await reserveSlot(workspaceId, "member");
+      } catch (err) {
+        if (err instanceof WorkspaceQuotaError) {
+          const code = err.code === "MEMBER_LIMIT_REACHED" ? "WORKSPACE_MEMBER_LIMIT_REACHED" : err.code;
+          return NextResponse.json({ error: "This workspace has no free seat. Free a seat or add seats before re-enabling this member.", code }, { status: 403 });
+        }
+        throw err;
+      }
+      try {
+        await memberRef.update({ status: "active", updatedAt: FieldValue.serverTimestamp() });
+      } catch (err) {
+        await resyncSlotCount(workspaceId, "member").catch(() => undefined);
+        throw err;
+      }
+    } else {
+      await memberRef.update({ status: body.disabled ? "suspended" : "active", updatedAt: FieldValue.serverTimestamp() });
+      // Disabling frees the seat (the record and its history stay) — recomputed from the real count, never a blind decrement.
+      await resyncSlotCount(workspaceId, "member").catch((err) =>
+        console.error("[workspaces/members] member-count resync failed (status change already applied):", err instanceof Error ? err.message : err)
+      );
+    }
     summary = `${body.disabled ? "disabled" : "re-enabled"} ${member.displayName ?? "a member"}`;
   } else {
     await memberRef.delete();

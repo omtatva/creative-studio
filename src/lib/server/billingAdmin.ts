@@ -50,7 +50,7 @@ export function deriveWorkspaceBillingCache(
 
 function sameLimits(a: Partial<WorkspacePlanLimits> | undefined, b: WorkspacePlanLimits): boolean {
   if (!a) return false;
-  const keys = ["maxMembers", "maxProjects", "maxStorageBytes", "maxAIRequestsPerMonth"] as const;
+  const keys = ["maxMembers", "maxProjects", "maxStorageBytes", "maxAIRequestsPerMonth", "maxFileEntitlementBytes"] as const;
   return keys.every((k) => a[k] === b[k]) && [...(a.enabledFeatures ?? [])].sort().join(",") === [...b.enabledFeatures].sort().join(",");
 }
 

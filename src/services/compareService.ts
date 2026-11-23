@@ -24,14 +24,14 @@ export class PreviewError extends Error {
 export const previewUrl = (ticket: string) => `/api/files/preview?t=${encodeURIComponent(ticket)}`;
 
 /** Issues a preview ticket for ONE file (the normal review player). Throws a readable Error when refused. */
-export async function createPreviewTicket(workspaceId: string, fileId: string): Promise<{ ticket: string; expiresAtMs: number }> {
+export async function createPreviewTicket(workspaceId: string, fileId: string, quality?: "original"): Promise<{ ticket: string; expiresAtMs: number; variant?: "proxy" | "original" }> {
   const user = getCurrentUser();
   if (!user) throw new Error("You must be signed in.");
   const idToken = await user.getIdToken();
   const response = await fetch("/api/files/preview", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
-    body: JSON.stringify({ workspaceId, fileId }),
+    body: JSON.stringify({ workspaceId, fileId, ...(quality ? { quality } : {}) }),
   });
   const data = await response.json().catch(() => ({}));
   // No JSON body at all means the server itself crashed (an HTML error page), not that access was refused.

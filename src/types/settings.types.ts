@@ -153,11 +153,12 @@ export interface SecuritySettings {
 }
 
 export interface StorageSettings {
-  usedBytes: number;
-  limitBytes: number;
-  /** LEGACY, never enforced — superseded by maxFileSizeMb. Kept so existing documents still type-check. */
-  maxUploadSizeMb: number;
-  /** Per-FILE size limit chosen by the workspace owner/admin (MB). null/absent = no workspace limit (the platform ceiling applies). Enforced in the browser AND by /api/files/finalize. The plan separately caps TOTAL storage. */
+  /** LEGACY display copies, no longer written or read — usage is workspaces/{id}.storageBytesUsed and limits come from the entitlement resolver. Old documents still carry them. */
+  usedBytes?: number;
+  limitBytes?: number;
+  /** LEGACY, never enforced — superseded by maxFileSizeMb. No longer written. */
+  maxUploadSizeMb?: number;
+  /** The workspace owner/admin's OWN per-file choice (MB) — workspace CONFIGURATION, separate from the per-file entitlement (limits.maxFileEntitlementBytes). It can only lower the limit; it is written through /api/workspaces/file-limit and capped again by /api/files/finalize. null/absent = nothing chosen. */
   maxFileSizeMb?: number | null;
   allowedFileTypes: string[]; // extensions, e.g. "png", "pdf"
 }
@@ -183,7 +184,8 @@ export interface TaskTemplate {
 }
 
 export interface TaskDefaultSettings {
-  defaultPriority: "low" | "medium" | "high" | "urgent";
+  /** The id of one of the workspace's task priorities (Settings > Task Settings > Custom priorities) — preselected on a new task. */
+  defaultPriority: string;
   autoAssignToCreator: boolean;
   defaultAssigneeUid: string | null;
   templates: TaskTemplate[];

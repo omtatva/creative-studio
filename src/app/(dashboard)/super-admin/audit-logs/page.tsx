@@ -20,6 +20,7 @@ const ACTION_LABEL: Record<PlatformAuditAction, string> = {
   enterprise_activated: "Enterprise activated",
   subscription_status_changed: "Subscription status changed",
   platform_settings_updated: "Platform settings updated",
+  entitlement_overrides_updated: "Workspace entitlement overrides updated",
 };
 
 /** Super Admin > Audit Logs — every Super Admin action, see platformAudit.types.ts. Read-only. */

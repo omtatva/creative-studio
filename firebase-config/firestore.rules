@@ -289,6 +289,8 @@ service cloud.firestore {
     match /review_reviewer_identities/{id} { allow read, write: if false; }
     match /review_email_codes/{id} { allow read, write: if false; }
     match /download_tickets/{id} { allow read, write: if false; }
+    // Multipart upload sessions (+ their storage reservations): created/read/settled only by /api/uploads/* via the Admin SDK.
+    match /upload_sessions/{id} { allow read, write: if false; }
     match /preview_tickets/{id} { allow read, write: if false; }
 
     match /workspaces/{workspaceId} {
@@ -382,6 +384,13 @@ service cloud.firestore {
           && isWorkspaceMember(workspaceId)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
         allow delete: if isSelf(uid);
+      }
+
+      // DOWNLOAD HISTORY. Written ONLY by /api/files/download and /api/review/download (Admin SDK) after the access check passes. A member reads only their OWN feed,
+      // and only while still a workspace member. External reviewers' events live under the reserved `_external` bucket, which no uid can equal, so no client reads them.
+      match /download_history/{uid}/items/{itemId} {
+        allow read: if isSelf(uid) && isWorkspaceMember(workspaceId);
+        allow write: if false;
       }
 
       // See WorkspaceSubscription's doc comment in billing.types.ts —

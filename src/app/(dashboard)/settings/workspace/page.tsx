@@ -144,7 +144,7 @@ export default function WorkspaceSettingsPage() {
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Input label="Workspace name" error={errors.name?.message} {...register("name")} />
               <Input label="Company name" error={errors.companyName?.message} {...register("companyName")} />
-              <Input label="Workspace URL" hint="app.creativestudio.com/w/your-slug" error={errors.slug?.message} {...register("slug")} />
+              <Input label="Workspace URL" hint="A short identifier for this workspace" error={errors.slug?.message} {...register("slug")} />
               <Input label="Company email" type="email" placeholder="hello@company.com" error={errors.companyEmail?.message} {...register("companyEmail")} />
               <div className="sm:col-span-2">
                 <Input label="Company website" placeholder="https://company.com" error={errors.companyWebsite?.message} {...register("companyWebsite")} />

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft, ExternalLink, FolderKanban, Settings, Trash2 } from "lucide-react";
 import { SettingsSection } from "@/components/settings/SettingsSection";
+import { EntitlementOverridesCard } from "@/components/settings/EntitlementOverridesCard";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -213,6 +214,8 @@ export default function SuperAdminCustomerDetailPage({ params }: { params: Promi
           </div>
         </div>
       </SettingsSection>
+
+      <EntitlementOverridesCard workspaceId={workspaceId} />
 
       <SettingsSection title={`Projects (${projects.length})`} description={`${activeProjects.length} active · ${archivedProjects.length} archived`}>
         {projects.length === 0 ? (

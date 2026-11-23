@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { countSeatHolders } from "@/lib/server/seats";
 import { verifyRequestAuth, AuthVerificationError, adminDb } from "@/lib/server/firebaseAdmin";
 import { applySubscriptionUpdate, getSubscriptionAdmin, planRequestDecision } from "@/lib/server/billingAdmin";
 import { logPlatformAudit } from "@/lib/server/platformAudit";
@@ -62,7 +63,7 @@ export async function POST(request: NextRequest) {
   const [existing, planConfigSnap, memberCountSnap, projectCountSnap] = await Promise.all([
     getSubscriptionAdmin(workspaceId),
     adminDb().collection("platform_config").doc("plans").get(),
-    adminDb().collection("members").where("workspaceId", "==", workspaceId).count().get(),
+    countSeatHolders(workspaceId),
     adminDb().collection("projects").where("workspaceId", "==", workspaceId).where("isArchived", "==", false).count().get(),
   ]);
   // SECURITY (audit Priority 8): resolved from the LIVE, Super-Admin-
@@ -75,7 +76,7 @@ export async function POST(request: NextRequest) {
   const targetLimits = mergePlanConfig(planConfigSnap.exists ? (planConfigSnap.data() as PlatformPlanConfig) : null).limits[
     planId as WorkspacePlan
   ];
-  const memberCount = memberCountSnap.data().count;
+  const memberCount = memberCountSnap;
   const projectCount = projectCountSnap.data().count;
 
   const violations: string[] = [];

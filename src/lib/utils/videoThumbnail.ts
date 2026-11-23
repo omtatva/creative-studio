@@ -79,3 +79,36 @@ export function readMediaDuration(file: File): Promise<number | null> {
     });
   });
 }
+
+/** A small JPEG preview of an image File (longest side 640 px), made in the browser. Best-effort: resolves null on any failure. Never touches the original. */
+export function captureImageThumbnail(file: File): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    const done = (blob: Blob | null) => {
+      URL.revokeObjectURL(url);
+      resolve(blob);
+    };
+    const timeout = setTimeout(() => done(null), 10000);
+    img.onload = () => {
+      clearTimeout(timeout);
+      try {
+        const scale = Math.min(1, 640 / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round((img.naturalWidth || 320) * scale));
+        canvas.height = Math.max(1, Math.round((img.naturalHeight || 180) * scale));
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return done(null);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => done(blob), "image/jpeg", 0.85);
+      } catch {
+        done(null);
+      }
+    };
+    img.onerror = () => {
+      clearTimeout(timeout);
+      done(null);
+    };
+    img.src = url;
+  });
+}

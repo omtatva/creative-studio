@@ -75,7 +75,7 @@ export default function SuperAdminCustomersPage() {
     Promise.all(
       workspaces.map(async (workspace) => {
         const members = await getWorkspaceMembers(workspace.id).catch(() => [] as Member[]);
-        return { workspace, owner: members.find((m) => m.userId === workspace.ownerId) ?? null, memberCount: members.length };
+        return { workspace, owner: members.find((m) => m.userId === workspace.ownerId) ?? null, memberCount: members.filter((m) => m.status !== "suspended" && m.status !== "invited").length };
       })
     ).then((results) => {
       if (!cancelled) setRows(results.sort((a, b) => (b.workspace.createdAt > a.workspace.createdAt ? 1 : -1)));

@@ -40,6 +40,44 @@ export type AssetStatus = "none" | "pending_review" | "approved" | "changes_requ
  * instead of needing a second embedded-versions schema.
  */
 /**
+ * Background processing of an uploaded video. `queued` -> `processing` -> `ready` | `failed` | `unsupported`. Derivatives (thumbnail, playback proxy) are SEPARATE objects
+ * under files/{fileId}/derived/ — playback may use the proxy, downloads ALWAYS use the original. See workers/video-processor and docs/video-processing.md.
+ */
+export type ProcessingStatus = "queued" | "processing" | "ready" | "failed" | "unsupported";
+
+export interface VideoMetadata {
+  durationSeconds: number | null;
+  width: number | null;
+  height: number | null;
+  frameRate: number | null;
+  videoCodec: string | null;
+  audioCodec: string | null;
+  container: string | null;
+  bitRate: number | null;
+}
+
+export interface FileProcessing {
+  status: ProcessingStatus;
+  attempts: number;
+  /** Epoch ms; a `processing` claim older than this is considered abandoned and may be taken over (idempotent retry). */
+  leaseUntil?: number | null;
+  startedAt?: number | null;
+  finishedAt?: number | null;
+  updatedAt: number;
+  /** Short, user-safe reason when failed/unsupported (never a path, URL or secret). */
+  error?: string | null;
+  metadata?: VideoMetadata | null;
+  /** Server-generated thumbnail object (separate from the client-made `thumbnailUrl`). */
+  thumbnailPath?: string | null;
+  /** Lower-resolution playback proxy object, set only after its duration was verified against the original. */
+  proxyPath?: string | null;
+  proxyContentType?: string | null;
+  proxyBytes?: number | null;
+  /** Why no proxy exists even though processing succeeded (e.g. already small, too long). */
+  proxySkipped?: string | null;
+}
+
+/**
  * "restricted" (default, or the field is simply absent on older docs) —
  * only real project members can open this file, exactly as before this
  * feature existed. "organization" — any signed-in member of the file's
@@ -125,6 +163,8 @@ export interface ProjectFile extends Timestamps {
   previousVersionId: ID | null;
   isLatestVersion: boolean;
   durationSeconds: number | null; // video/audio only, when known
+  /** Background video processing (videos only; absent on files uploaded before it existed or when no processor is configured). The ORIGINAL object (`storagePath`) is never touched by it. */
+  processing?: FileProcessing;
   /** Null (or absent, on any file uploaded before this feature) means never shared — see FileShareSettings above. */
   shareSettings: FileShareSettings | null;
 }

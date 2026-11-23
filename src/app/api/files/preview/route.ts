@@ -9,6 +9,14 @@ import { expireAt, PREVIEW_TICKET_TTL_MS } from "@/lib/server/ttl";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/** The verified playback proxy of a video, if one exists and is allowed here — otherwise null (play the original). Always inside the file's own derived/ folder. */
+function playbackProxyPath(file: FirebaseFirestore.DocumentData, fileId: string, workspaceId: string, forceOriginal: boolean): string | null {
+  if (forceOriginal || file.assetType !== "video") return null;
+  const p = file.processing as { status?: string; proxyPath?: string | null } | undefined;
+  if (p?.status !== "ready" || typeof p.proxyPath !== "string") return null;
+  return p.proxyPath.startsWith(`workspaces/${workspaceId}/projects/${file.projectId}/files/${fileId}/derived/`) ? p.proxyPath : null;
+}
+
 /**
  * Every failure carries a machine-readable `code` (TICKET_CREATE_FAILED, UNAUTHORIZED, PROJECT_ACCESS_DENIED, FILE_NOT_FOUND,
  * STORAGE_PATH_MISSING, TICKET_EXPIRED, INVALID_TICKET, UNSUPPORTED_MEDIA, STORAGE_OBJECT_NOT_FOUND, RANGE_ERROR, STREAM_ERROR) so the
@@ -42,7 +50,7 @@ export async function POST(request: NextRequest) {
     return fail(500, "TICKET_CREATE_FAILED", "Couldn't load the preview.", err);
   }
 
-  let body: { workspaceId?: unknown; fileId?: unknown };
+  let body: { workspaceId?: unknown; fileId?: unknown; quality?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -61,12 +69,15 @@ export async function POST(request: NextRequest) {
     if (!access.canRead) return fail(403, "PROJECT_ACCESS_DENIED", "You don't have access to this project's files.");
     if (!file.storagePath.startsWith(`workspaces/${body.workspaceId}/projects/${file.projectId}/`)) return fail(404, "STORAGE_PATH_MISSING", "This file isn't available.");
 
+    // PLAYBACK may use the lower-resolution proxy once background processing verified it (same timeline as the original); DOWNLOADS never do — they use
+    // /api/files/download, which only ever resolves the original `storagePath`. quality:"original" forces the original (the player's fallback if the proxy fails).
+    const proxyPath = playbackProxyPath(file, snap.id, body.workspaceId, body.quality === "original");
     const ticket = randomBytes(24).toString("hex");
     const expiresAtMs = Date.now() + PREVIEW_TICKET_TTL_MS; // milliseconds, compared with Date.now() on every GET
     await adminDb().collection("preview_tickets").doc(ticket).set({
-      uid, workspaceId: body.workspaceId, projectId: file.projectId, fileId: snap.id, storagePath: file.storagePath, contentType: file.contentType ?? "application/octet-stream", expiresAtMs, expireAt: expireAt(expiresAtMs),
+      uid, workspaceId: body.workspaceId, projectId: file.projectId, fileId: snap.id, storagePath: proxyPath ?? file.storagePath, contentType: proxyPath ? "video/mp4" : file.contentType ?? "application/octet-stream", expiresAtMs, expireAt: expireAt(expiresAtMs),
     });
-    return NextResponse.json({ ticket, expiresAtMs });
+    return NextResponse.json({ ticket, expiresAtMs, variant: proxyPath ? "proxy" : "original" });
   } catch (err) {
     // Typically a LOCAL configuration problem (e.g. Firebase Admin credentials), not an authorization decision — surfaced as such, in JSON.
     return fail(500, "TICKET_CREATE_FAILED", "Couldn't load the preview.", err);
@@ -102,7 +113,8 @@ export async function GET(request: NextRequest) {
   ]);
   const file = fileSnap.data();
   if (!access.canRead) return fail(403, "PROJECT_ACCESS_DENIED", "You don't have access to this file.");
-  if (!fileSnap.exists || !file || file.projectId !== ticket.projectId || file.workspaceId !== ticket.workspaceId || file.storagePath !== ticket.storagePath) {
+  const servesProxy = !!file && ticket.storagePath !== file.storagePath && ticket.storagePath === playbackProxyPath(file, ticket.fileId, ticket.workspaceId, false);
+  if (!fileSnap.exists || !file || file.projectId !== ticket.projectId || file.workspaceId !== ticket.workspaceId || (file.storagePath !== ticket.storagePath && !servesProxy)) {
     return fail(404, "FILE_NOT_FOUND", "This file is no longer available.");
   }
   if (!ticket.storagePath.startsWith(`workspaces/${ticket.workspaceId}/projects/${ticket.projectId}/`)) return fail(404, "STORAGE_PATH_MISSING", "This file is no longer available.");

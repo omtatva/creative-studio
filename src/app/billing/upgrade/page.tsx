@@ -1,5 +1,6 @@
 "use client";
 
+import { GB } from "@/lib/constants/uploadPolicy";
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -174,7 +175,7 @@ function UpgradePageContent() {
                       <li>{Number.isFinite(limits.maxProjects) ? `${limits.maxProjects} active projects` : "Unlimited projects"}</li>
                       <li>
                         {Number.isFinite(limits.maxStorageBytes)
-                          ? `${(limits.maxStorageBytes / (1024 * 1024 * 1024)).toFixed(0)} GB storage`
+                          ? `${(limits.maxStorageBytes / GB).toFixed(0)} GB storage`
                           : "Unlimited storage"}
                       </li>
                       <li>

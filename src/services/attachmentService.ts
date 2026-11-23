@@ -3,6 +3,7 @@ import { taskAttachmentsCol, taskAttachmentDoc, taskDoc } from "@/lib/firebase/f
 import { taskAttachmentRef, uploadFile, deleteFile, fileRefFromPath } from "@/lib/firebase/storage";
 import { logTaskActivity } from "@/services/taskActivityService";
 import { AttachmentVersion, TaskActor, TaskAttachment } from "@/types/task.types";
+import { getFixedClassSizeError } from "@/lib/constants/uploadPolicy";
 
 /**
  * Attachment upload/list/delete for a task's `attachments`
@@ -24,6 +25,8 @@ export async function uploadAttachment(
   file: File,
   uploadedBy: TaskActor
 ): Promise<void> {
+  const sizeError = getFixedClassSizeError("task_attachment", file);
+  if (sizeError) throw new Error(sizeError);
   const existing = await getAttachments(taskId);
   const match = existing.find((a) => a.fileName === file.name);
 

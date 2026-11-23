@@ -1,7 +1,9 @@
 import "server-only";
 import { AggregateField, FieldValue, Transaction } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/server/firebaseAdmin";
+import { formatBytesShort } from "@/lib/constants/uploadPolicy";
 import { resolveWorkspaceEntitlements } from "@/lib/server/workspaceEntitlements";
+import { countSeatHolders } from "@/lib/server/seats";
 
 /**
  * Server-side, transaction-atomic maxMembers/maxProjects enforcement —
@@ -125,8 +127,7 @@ async function countReal(metric: QuotaMetric, workspaceId: string): Promise<numb
       return docs.docs.reduce((sum, d) => sum + (Number(d.data().sizeBytes) || 0), 0);
     }
   }
-  const snap = await adminDb().collection("members").where("workspaceId", "==", workspaceId).count().get();
-  return snap.data().count;
+  return countSeatHolders(workspaceId);
 }
 
 /**
@@ -212,7 +213,7 @@ export async function reserveStorageBytes(workspaceId: string, bytes: number): P
     if (current + bytes > limit) {
       throw new WorkspaceQuotaError(
         "STORAGE_LIMIT_REACHED",
-        `This upload would exceed this workspace's plan storage limit (${(limit / (1024 * 1024 * 1024)).toFixed(1)} GB).`
+        `This upload would exceed this workspace's storage limit (${formatBytesShort(limit)}).`
       );
     }
 

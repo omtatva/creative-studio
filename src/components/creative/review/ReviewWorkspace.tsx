@@ -34,6 +34,7 @@ import * as fileService from "@/services/fileService";
 import { useAssetOptions } from "@/hooks/useAssetOptions";
 import { useReviews } from "@/hooks/useReviews";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
+import { useUploads } from "@/contexts/UploadContext";
 import type { Review } from "@/types/review.types";
 import { useReviewActions } from "@/hooks/useReviewActions";
 import { useStages } from "@/hooks/useStages";
@@ -141,8 +142,13 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
   const [isSendReviewOpen, setIsSendReviewOpen] = useState(false);
   const [isCreateTaskOpen, setIsCreateTaskOpen] = useState(false);
   const [taskSourceComment, setTaskSourceComment] = useState<AssetComment | null>(null);
-  const [isUploadingVersion, setIsUploadingVersion] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
+  // A new-version upload lives in the app-level upload manager, so it keeps going (and stays visible in the navbar) if you leave this page.
+  const uploadManager = useUploads();
+  const versionUpload = uploadManager.uploads.find(
+    (u) => u.newVersionOfId === group.latest.id && u.workspaceId === asset.workspaceId && (["queued", "preparing", "uploading", "retrying", "paused", "finalizing"] as string[]).includes(u.status)
+  );
+  const isUploadingVersion = !!versionUpload;
+  const uploadProgress = versionUpload?.progress ?? 0;
   const [isEditStatusesOpen, setIsEditStatusesOpen] = useState(false);
   const [isSavingStatuses, setIsSavingStatuses] = useState(false);
   const [isArchiveConfirmOpen, setIsArchiveConfirmOpen] = useState(false);
@@ -220,21 +226,22 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
       toast.error(validationError);
       return;
     }
-    setIsUploadingVersion(true);
-    setUploadProgress(0);
-    try {
-      const newFileId = await fileActions.uploadNewVersion(projectId, group.latest, file, setUploadProgress);
-      if (newFileId) {
-        toast.success(`Uploaded v${group.latest.versionNumber + 1}`);
-        router.replace(fileReviewRoute(projectId, stageId, newFileId));
-      } else {
-        toast.error("Upload failed. Please try again.");
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Upload failed. Please try again.");
-    } finally {
-      setIsUploadingVersion(false);
-    }
+    const latest = group.latest;
+    const started = uploadManager.start({
+      workspaceId: latest.workspaceId,
+      projectId,
+      stageId: latest.stageId,
+      newVersionOf: latest,
+      file,
+      onSuccess: (newFileId) => {
+        // Only move to the new version if the person is still looking at this asset; otherwise the navbar indicator already told them.
+        if (window.location.pathname.includes(`/files/${latest.id}`) || window.location.pathname.includes(`/files/${asset.id}`)) {
+          toast.success(`Uploaded v${latest.versionNumber + 1}`);
+          router.replace(fileReviewRoute(projectId, stageId, newFileId));
+        }
+      },
+    });
+    if (!started) toast.error("You must be signed in to upload.");
   }
 
   async function handleArchive() {
@@ -410,6 +417,7 @@ export function ReviewWorkspace({ projectId, stageId, group, activeFileId }: Rev
                 seekTo={seekTo}
                 onSeekHandled={() => setSeekTo(null)}
                 onTimeChange={setCurrentTime}
+                onMediaError={preview.variant === "proxy" ? preview.fallbackToOriginal : undefined}
                 highlightedCommentId={highlightedCommentId}
                 onCreateCommentMarker={(x, y, t) => handleCreateCommentMarker(x, y, t, null)}
                 onCreateShape={(data, t) => handleCreateShape(data, t, null)}

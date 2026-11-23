@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Modal } from "@/components/ui/Modal";
@@ -13,9 +13,19 @@ import { TagsInput } from "@/components/projects/TagsInput";
 import { taskFormSchema, type TaskFormValues } from "@/lib/validations/task.schema";
 import { useTaskOptions } from "@/hooks/useTaskOptions";
 import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
+import { useAuthContext } from "@/contexts/AuthContext";
+import { useWorkspaceSettings } from "@/hooks/useWorkspaceSettings";
+import { DEFAULT_TASK_DEFAULT_SETTINGS } from "@/lib/constants/settingsDefaults";
 import { useProjects } from "@/hooks/useProjects";
 import { getProject } from "@/services/projectService";
 import { Task, TaskActor } from "@/types/task.types";
+
+/** A template's plain-text description as safe editor HTML (text escaped, line breaks kept). */
+function templateDescriptionHtml(text: string): string {
+  if (!text) return "";
+  const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return `<p>${escaped.split("\n").join("<br>")}</p>`;
+}
 
 interface TaskFormModalProps {
   isOpen: boolean;
@@ -38,6 +48,12 @@ interface TaskFormModalProps {
 export function TaskFormModal({ isOpen, onClose, task, projectId, initialTitle, initialDescriptionHtml, onSubmit, isSubmitting }: TaskFormModalProps) {
   const { workspaceId } = useWorkspaceContext();
   const { options, isLoading: isLoadingOptions } = useTaskOptions();
+  const { firebaseUser } = useAuthContext();
+  const { settings: workspaceSettings } = useWorkspaceSettings();
+  const taskDefaults = workspaceSettings?.taskDefaults ?? DEFAULT_TASK_DEFAULT_SETTINGS;
+  // Settings > Task Settings > Defaults: the preselected priority (when it still exists) for a NEW task.
+  const defaultPriorityId = options.priorities.some((p) => p.id === taskDefaults.defaultPriority) ? taskDefaults.defaultPriority : options.priorities[0]?.id ?? "";
+  const assigneeTouched = useRef(false);
   const { allProjectsForCounts: allProjects } = useProjects();
 
   const [selectedProjectId, setSelectedProjectId] = useState(projectId ?? task?.projectId ?? "");
@@ -49,6 +65,7 @@ export function TaskFormModal({ isOpen, onClose, task, projectId, initialTitle, 
     handleSubmit,
     control,
     reset,
+    setValue,
     formState: { errors },
   } = useForm<TaskFormValues>({
     resolver: zodResolver(taskFormSchema),
@@ -57,7 +74,7 @@ export function TaskFormModal({ isOpen, onClose, task, projectId, initialTitle, 
       descriptionHtml: "",
       assigneeUid: null,
       statusId: options.statuses[0]?.id ?? "",
-      priorityId: options.priorities[0]?.id ?? "",
+      priorityId: defaultPriorityId,
       startDate: null,
       dueDate: null,
       estimatedMinutes: null,
@@ -70,12 +87,13 @@ export function TaskFormModal({ isOpen, onClose, task, projectId, initialTitle, 
     if (!isOpen) return;
     setSelectedProjectId(projectId ?? task?.projectId ?? "");
     setAssignee(task?.assignee ?? null);
+    assigneeTouched.current = false;
     reset({
       title: task?.title ?? initialTitle ?? "",
       descriptionHtml: task?.descriptionHtml ?? initialDescriptionHtml ?? "",
       assigneeUid: task?.assignee?.uid ?? null,
       statusId: task?.statusId ?? options.statuses[0]?.id ?? "",
-      priorityId: task?.priorityId ?? options.priorities[0]?.id ?? "",
+      priorityId: task?.priorityId ?? defaultPriorityId,
       startDate: task?.startDate ?? null,
       dueDate: task?.dueDate ?? null,
       estimatedMinutes: task?.estimatedMinutes ?? null,
@@ -96,6 +114,15 @@ export function TaskFormModal({ isOpen, onClose, task, projectId, initialTitle, 
       );
     });
   }, [selectedProjectId, workspaceId]);
+
+  // A NEW task: apply the workspace's "Auto-assign to creator" / "Default assignee" setting once the project's members are known — never over a choice the person already made.
+  useEffect(() => {
+    if (!isOpen || task || assigneeTouched.current || assignee || projectMembers.length === 0) return;
+    const uid = taskDefaults.autoAssignToCreator ? firebaseUser?.uid : taskDefaults.defaultAssigneeUid;
+    const match = uid ? projectMembers.find((m) => m.uid === uid) : null;
+    if (match) setAssignee(match);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, task, projectMembers, taskDefaults.autoAssignToCreator, taskDefaults.defaultAssigneeUid, firebaseUser?.uid]);
 
   async function onFormSubmit(values: TaskFormValues) {
     if (!selectedProjectId) return;
@@ -125,6 +152,25 @@ export function TaskFormModal({ isOpen, onClose, task, projectId, initialTitle, 
             </div>
           )}
 
+          {!task && taskDefaults.templates.length > 0 && (
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-foreground">Start from a template</label>
+              <select
+                defaultValue=""
+                onChange={(e) => {
+                  const template = taskDefaults.templates.find((t) => t.id === e.target.value);
+                  if (!template) return;
+                  setValue("title", template.defaultTitle, { shouldValidate: true });
+                  setValue("descriptionHtml", templateDescriptionHtml(template.defaultDescription));
+                }}
+                className="h-10 w-full rounded-theme border border-border bg-surface px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+              >
+                <option value="">No template</option>
+                {taskDefaults.templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+          )}
+
           <Input label="Task title" placeholder="Design the new landing page hero" error={errors.title?.message} {...register("title")} />
 
           <div>
@@ -138,7 +184,7 @@ export function TaskFormModal({ isOpen, onClose, task, projectId, initialTitle, 
 
           <div>
             <p className="mb-1.5 text-sm font-medium text-foreground">Assignee</p>
-            <TaskAssigneePicker value={assignee} candidates={projectMembers} onChange={setAssignee} />
+            <TaskAssigneePicker value={assignee} candidates={projectMembers} onChange={(a) => { assigneeTouched.current = true; setAssignee(a); }} />
           </div>
 
           <div className="grid grid-cols-2 gap-3">

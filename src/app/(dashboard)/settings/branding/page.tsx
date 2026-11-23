@@ -60,7 +60,7 @@ export default function BrandingSettingsPage() {
     ? `${branding.logoUrl}${branding.logoUrl.includes("?") ? "&" : "?"}v=${encodeURIComponent(settings?.updatedAt ?? "")}`
     : null;
 
-  async function handleUpload(field: "logoUrl" | "faviconUrl" | "loginBackgroundUrl" | "dashboardBackgroundUrl", file: File) {
+  async function handleUpload(field: "logoUrl" | "faviconUrl" | "dashboardBackgroundUrl", file: File) {
     if (!workspaceId) return;
     setUploadingField(field);
     try {
@@ -151,15 +151,6 @@ export default function BrandingSettingsPage() {
           <ImageUploadSlot label="Favicon" previewUrl={branding.faviconUrl} isUploading={uploadingField === "faviconUrl"} onUpload={(f) => handleUpload("faviconUrl", f)} disabled={!canManageWorkspace} />
         </div>
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <ImageUploadSlot
-            label="Login background"
-            description="Shown behind the login form"
-            aspect="wide"
-            previewUrl={branding.loginBackgroundUrl}
-            isUploading={uploadingField === "loginBackgroundUrl"}
-            onUpload={(f) => handleUpload("loginBackgroundUrl", f)}
-            disabled={!canManageWorkspace}
-          />
           <ImageUploadSlot
             label="Dashboard background"
             description="Shown behind the main app"

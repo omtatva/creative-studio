@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { HardDrive } from "lucide-react";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { Input } from "@/components/ui/Input";
@@ -8,57 +9,45 @@ import { Button } from "@/components/ui/Button";
 import { Loader } from "@/components/ui/Loader";
 import { useWorkspaceSettings } from "@/hooks/useWorkspaceSettings";
 import { useFiles } from "@/hooks/useFiles";
-import { useWorkspaceContext } from "@/contexts/WorkspaceContext";
+import { useEntitlements } from "@/contexts/EntitlementsContext";
+import { useCurrentMemberRole } from "@/hooks/useCurrentMemberRole";
 import { useToast } from "@/hooks/useToast";
-import { checkWorkspaceLimit } from "@/services/planService";
-import { DEFAULT_STORAGE_SETTINGS } from "@/lib/constants/settingsDefaults";
-import Link from "next/link";
+import { setWorkspaceFileLimit } from "@/services/billingService";
+import { PLAN_DISPLAY_NAMES } from "@/lib/constants/planLimits";
 import { ROUTES } from "@/lib/constants/routes";
-import { MB, MAX_UPLOAD_SIZE_BYTES, SUPPORTED_CREATIVE_EXTENSIONS, effectiveMaxFileBytes, formatFileLimit } from "@/lib/constants/creativeFiles";
-import { StorageSettings } from "@/types/settings.types";
+import { MB, SUPPORTED_CREATIVE_EXTENSIONS, formatFileLimit } from "@/lib/constants/creativeFiles";
+import type { WorkspacePlan } from "@/types/workspace.types";
 
-
-function formatGb(bytes: number): string {
-  return (bytes / (1024 * 1024 * 1024)).toFixed(2);
-}
 function formatMb(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1);
 }
 
-/** Analytics breakdown is derived client-side from the real `files` collection (useFiles) — no separate analytics collection needed. */
+/**
+ * Settings > Storage. Every number on this page comes from the ONE resolved entitlement policy (EntitlementsContext): the plan or a Super Admin
+ * override decides the total storage and the file-size ceiling, the server counter decides what is used. The only thing an owner/admin can edit is
+ * their OWN per-file choice, which can only be at or below that ceiling.
+ */
 export default function StorageSettingsPage() {
-  const { settings, isLoading, isSaving, save } = useWorkspaceSettings();
+  const { isLoading: isLoadingSettings } = useWorkspaceSettings();
   const { files } = useFiles();
-  const { workspace } = useWorkspaceContext();
+  const { entitlements, isLoading: isLoadingEntitlements, error, refresh } = useEntitlements();
+  const { canManageWorkspace } = useCurrentMemberRole();
   const toast = useToast();
-  const [draft, setDraft] = useState<StorageSettings>(DEFAULT_STORAGE_SETTINGS);
-  // Per-file limit editor: empty = "no workspace limit" (the platform ceiling still applies).
+  // Per-file limit editor: empty = "no workspace-specific limit" (the workspace's entitlement ceiling applies).
   const [limitText, setLimitText] = useState("");
   const [limitUnit, setLimitUnit] = useState<"MB" | "GB">("GB");
+  const [isSaving, setIsSaving] = useState(false);
 
+  const configuredMb = entitlements?.files.workspaceConfiguredBytes ? Math.round(entitlements.files.workspaceConfiguredBytes / MB) : null;
   useEffect(() => {
-    if (settings) setDraft(settings.storage ?? DEFAULT_STORAGE_SETTINGS);
-    const mb = settings?.storage?.maxFileSizeMb;
-    if (typeof mb === "number" && mb > 0) {
-      const asGb = mb % 1024 === 0;
+    if (configuredMb !== null) {
+      const asGb = configuredMb % 1024 === 0;
       setLimitUnit(asGb ? "GB" : "MB");
-      setLimitText(String(asGb ? mb / 1024 : mb));
+      setLimitText(String(asGb ? configuredMb / 1024 : configuredMb));
     } else {
       setLimitText("");
     }
-  }, [settings]);
-
-  // Plan storage limit (see planService.ts / PlanUsageSection) — a
-  // SEPARATE field from the `settings.storage` upload-preferences doc above.
-  // Read-only: it follows the workspace's plan, which is server-controlled.
-  const [planLimit, setPlanLimit] = useState<{ used: number; limit: number } | null>(null);
-
-  useEffect(() => {
-    if (!workspace) return;
-    checkWorkspaceLimit(workspace, "storage")
-      .then((r) => setPlanLimit({ used: r.used, limit: r.limit }))
-      .catch((err) => console.error("[settings/storage] failed to load plan limit:", err));
-  }, [workspace]);
+  }, [configuredMb]);
 
   const byType = useMemo(() => {
     const groups: Record<string, number> = {};
@@ -68,58 +57,91 @@ export default function StorageSettingsPage() {
     }
     return Object.entries(groups).sort((a, b) => b[1] - a[1]);
   }, [files]);
-
   const totalUsed = byType.reduce((sum, [, bytes]) => sum + bytes, 0);
 
   async function handleSave() {
+    if (!entitlements) return;
     let maxFileSizeMb: number | null = null;
     if (limitText.trim() !== "") {
       const n = Number(limitText);
       const mb = Math.round(limitUnit === "GB" ? n * 1024 : n);
       if (!Number.isFinite(n) || n <= 0 || mb < 1) {
-        toast.error("Enter a file size limit of at least 1 MB, or leave it empty for no workspace limit.");
+        toast.error("Enter a file size limit of at least 1 MB, or leave it empty.");
         return;
       }
-      if (mb * MB > MAX_UPLOAD_SIZE_BYTES) {
-        toast.error(`The most a single file can be is ${formatFileLimit(MAX_UPLOAD_SIZE_BYTES)}.`);
+      if (mb * MB > entitlements.files.workspaceCeilingBytes) {
+        toast.error(`The most a single file can be in this workspace is ${formatFileLimit(entitlements.files.workspaceCeilingBytes)}. A higher limit is set by your plan, not here.`);
         return;
       }
       maxFileSizeMb = mb;
     }
+    setIsSaving(true);
     try {
-      await save({ storage: { ...draft, maxFileSizeMb } });
+      await setWorkspaceFileLimit(entitlements.workspaceId, maxFileSizeMb);
+      await refresh();
       toast.success("Storage settings saved");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't save settings");
+    } finally {
+      setIsSaving(false);
     }
   }
 
-  if (isLoading) return <Loader label="Loading storage settings..." />;
+  if (isLoadingSettings || (isLoadingEntitlements && !entitlements)) return <Loader label="Loading storage settings..." />;
+  if (!entitlements) {
+    return (
+      <div className="flex flex-col gap-3">
+        <h1 className="text-xl font-semibold text-foreground">Storage</h1>
+        <p className="text-sm text-error">{error ?? "Couldn't load this workspace's storage details."}</p>
+        <div><Button size="sm" variant="outline" onClick={() => void refresh()}>Try again</Button></div>
+      </div>
+    );
+  }
 
-  // The limit shown is the PLAN's (what uploads are actually checked against), and "used" is the server-maintained counter when present.
-  const planStorageLimit = workspace?.limits?.maxStorageBytes ?? draft.limitBytes;
-  const counter = (workspace as unknown as { storageBytesUsed?: number } | null)?.storageBytesUsed;
-  const usedNow = typeof counter === "number" ? counter : draft.usedBytes;
-  const percent = Number.isFinite(planStorageLimit) ? Math.min(100, (usedNow / planStorageLimit) * 100) : 0;
-  const effectiveFileLimit = effectiveMaxFileBytes(settings?.storage?.maxFileSizeMb);
-  const remaining = Number.isFinite(planStorageLimit) ? Math.max(0, planStorageLimit - usedNow) : Infinity;
+  const { files: filePolicy, storage } = entitlements;
+  const total = storage.limitBytes;
+  const percent = total ? Math.min(100, (storage.usedBytes / total) * 100) : 0;
+  const planName = PLAN_DISPLAY_NAMES[entitlements.plan as WorkspacePlan] ?? entitlements.plan;
+  const dirty = (limitText.trim() === "" ? null : Math.round(limitUnit === "GB" ? Number(limitText) * 1024 : Number(limitText))) !== configuredMb;
 
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-xl font-semibold text-foreground">Storage</h1>
-        <p className="mt-1 text-sm text-foreground-muted">Usage, upload limits, and allowed file types.</p>
+        <p className="mt-1 text-sm text-foreground-muted">File size limit, total workspace storage, and what is used.</p>
       </div>
 
-      <SettingsSection title="Usage">
-        <div className="flex items-center gap-3">
-          <HardDrive className="h-5 w-5 text-foreground-muted" />
+      <SettingsSection title="Your storage at a glance" description={`Plan: ${planName}. Total storage and the file size ceiling are set by your plan (or by the platform for this workspace) — see Settings > Billing & Plan.`}>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-theme border border-border bg-surface p-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Maximum file size</p>
+            <p className="mt-1 text-lg font-semibold text-foreground">{formatFileLimit(filePolicy.maxFileBytes)}</p>
+            <p className="mt-0.5 text-xs text-foreground-muted">The largest <em>one</em> file you can upload.</p>
+          </div>
+          <div className="rounded-theme border border-border bg-surface p-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Workspace storage used</p>
+            <p className="mt-1 text-lg font-semibold text-foreground">{formatFileLimit(storage.usedBytes)}</p>
+            <p className="mt-0.5 text-xs text-foreground-muted">Across every project.</p>
+          </div>
+          <div className="rounded-theme border border-border bg-surface p-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Total workspace storage</p>
+            <p className="mt-1 text-lg font-semibold text-foreground">{total ? formatFileLimit(total) : "Unlimited"}</p>
+            <p className="mt-0.5 text-xs text-foreground-muted">{storage.source === "override" ? "Custom limit set by the platform" : "From your plan"}</p>
+          </div>
+          <div className="rounded-theme border border-border bg-surface p-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-foreground-muted">Storage remaining</p>
+            <p className="mt-1 text-lg font-semibold text-foreground">{storage.remainingBytes !== null ? formatFileLimit(storage.remainingBytes) : "Unlimited"}</p>
+            <p className="mt-0.5 text-xs text-foreground-muted">{formatFileLimit(storage.usedBytes)} / {total ? formatFileLimit(total) : "unlimited"}</p>
+          </div>
+        </div>
+        <div className="mt-4 flex items-center gap-3">
+          <HardDrive className="h-5 w-5 shrink-0 text-foreground-muted" />
           <div className="flex-1">
             <div className="h-2 w-full overflow-hidden rounded-full bg-surface-muted">
               <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${percent}%` }} />
             </div>
             <p className="mt-1.5 text-xs text-foreground-muted">
-              {formatGb(usedNow)} GB of {Number.isFinite(planStorageLimit) ? `${formatGb(planStorageLimit)} GB` : "unlimited"} used
+              {formatFileLimit(storage.usedBytes)} of {total ? formatFileLimit(total) : "unlimited"} used{total ? ` (${percent.toFixed(percent < 10 ? 1 : 0)}%)` : ""}
             </p>
             {percent >= 80 && (
               <p className="mt-1 text-xs text-warning">
@@ -128,24 +150,6 @@ export default function StorageSettingsPage() {
             )}
           </div>
         </div>
-      </SettingsSection>
-
-      <SettingsSection
-        title="Workspace storage limit"
-        description="The storage cap for your plan, enforced before an upload is allowed. It follows your plan — see Settings > Billing & Plan."
-      >
-        {!planLimit ? (
-          <p className="text-xs text-foreground-muted">Loading...</p>
-        ) : (
-          <div>
-            <div className="mb-1 flex items-center justify-between text-xs">
-              <span className="text-foreground-muted">Storage limit</span>
-              <span className="text-foreground-muted">
-                {formatGb(planLimit.used)} GB / {Number.isFinite(planLimit.limit) ? `${formatGb(planLimit.limit)} GB` : "Unlimited"}
-              </span>
-            </div>
-          </div>
-        )}
       </SettingsSection>
 
       <SettingsSection title="Storage analytics" description="Breakdown of uploaded files by type.">
@@ -170,7 +174,7 @@ export default function StorageSettingsPage() {
 
       <SettingsSection
         title="Upload limits"
-        action={<Button size="sm" onClick={handleSave} isLoading={isSaving}>Save changes</Button>}
+        action={canManageWorkspace ? <Button size="sm" onClick={handleSave} isLoading={isSaving} disabled={!dirty}>Save changes</Button> : undefined}
       >
         <div className="flex flex-col gap-4">
           <div>
@@ -181,12 +185,14 @@ export default function StorageSettingsPage() {
                 type="number"
                 min={1}
                 value={limitText}
-                placeholder="No workspace limit"
+                placeholder={`Up to ${formatFileLimit(filePolicy.workspaceCeilingBytes)}`}
+                disabled={!canManageWorkspace}
                 onChange={(e) => setLimitText(e.target.value)}
               />
               <select
                 aria-label="Unit"
                 value={limitUnit}
+                disabled={!canManageWorkspace}
                 onChange={(e) => setLimitUnit(e.target.value as "MB" | "GB")}
                 className="h-10 rounded-theme border border-border bg-surface px-2 text-sm text-foreground"
               >
@@ -195,8 +201,9 @@ export default function StorageSettingsPage() {
               </select>
             </div>
             <p className="mt-1.5 text-xs text-foreground-muted">
-              Applies to every upload and new version in this workspace, right away. Currently uploads up to <span className="font-medium text-foreground">{formatFileLimit(effectiveFileLimit)}</span> are accepted
-              {Number.isFinite(remaining) ? `, and your plan has ${formatFileLimit(remaining)} of storage left` : ""}. The most a single file can ever be is {formatFileLimit(MAX_UPLOAD_SIZE_BYTES)}; your plan&apos;s total storage is separate and set by your plan.
+              Applies to every upload and new version in this workspace, right away. Files up to <span className="font-medium text-foreground">{formatFileLimit(filePolicy.maxFileBytes)}</span> are accepted now
+              {filePolicy.source === "workspace" ? " (your own limit)" : filePolicy.source === "override" ? " (set by the platform for this workspace)" : filePolicy.source === "plan" ? " (from your plan)" : ""}.
+              You can choose any value up to {formatFileLimit(filePolicy.workspaceCeilingBytes)} — that is the most one file can be in this workspace. It does not change your total workspace storage, which is set by your plan.
             </p>
           </div>
           <div>

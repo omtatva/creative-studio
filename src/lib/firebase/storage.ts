@@ -85,10 +85,13 @@ export async function uploadFile(fileRef: StorageReference, file: File | Blob): 
  * files would otherwise show no feedback until they finish outright.
  * `onProgress` receives 0-100 on every Storage `state_changed` tick.
  */
+// The SDK keeps retrying a dropped connection with backoff for this long before it fails the upload (default 10 min, far too short for a multi-GB file on an unstable network).
+storage.maxUploadRetryTime = 60 * 60 * 1000;
+
 export function uploadFileWithProgress(
   fileRef: StorageReference,
   file: File,
-  onProgress: (percent: number) => void
+  onProgress: (percent: number, bytesTransferred?: number, totalBytes?: number) => void
 ): { promise: Promise<string>; cancel: () => void } {
   const task = uploadBytesResumable(fileRef, file);
 
@@ -97,7 +100,7 @@ export function uploadFileWithProgress(
       "state_changed",
       (snapshot) => {
         const percent = snapshot.totalBytes > 0 ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100) : 0;
-        onProgress(percent);
+        onProgress(percent, snapshot.bytesTransferred, snapshot.totalBytes);
       },
       (err) => reject(err),
       () => {

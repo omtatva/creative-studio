@@ -13,6 +13,8 @@ export type DownloadTarget =
  * permission — then lets the browser fetch the exact file/version as an
  * attachment. Throws an Error with a user-readable message when refused.
  */
+const newRequestId = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`);
+
 export async function downloadFile(target: DownloadTarget): Promise<void> {
   const user = getCurrentUser();
   if (!user) throw new Error("You must be signed in.");
@@ -20,13 +22,15 @@ export async function downloadFile(target: DownloadTarget): Promise<void> {
   const response = await fetch("/api/files/download", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
-    body: JSON.stringify(target),
+    // One id per click: a retried/duplicated request maps to the SAME history event server-side.
+    body: JSON.stringify({ ...target, requestId: newRequestId() }),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data?.error ?? "Couldn't download this file.");
 
+  // Direct (signed GCS URL, original bytes straight from storage) or, as a fallback, the ticketed server stream.
   const anchor = document.createElement("a");
-  anchor.href = `/api/files/download?t=${encodeURIComponent(data.ticket)}`;
+  anchor.href = typeof data.url === "string" ? data.url : `/api/files/download?t=${encodeURIComponent(data.ticket)}`;
   anchor.download = data.fileName ?? "";
   anchor.rel = "noopener";
   document.body.appendChild(anchor);

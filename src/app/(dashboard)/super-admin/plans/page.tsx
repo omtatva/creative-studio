@@ -1,5 +1,6 @@
 "use client";
 
+import { GB } from "@/lib/constants/uploadPolicy";
 import { useEffect, useState } from "react";
 import { SettingsSection } from "@/components/settings/SettingsSection";
 import { Badge } from "@/components/ui/Badge";
@@ -22,7 +23,7 @@ const FEATURE_LABELS: Record<FeatureKey, string> = {
   customBranding: "Custom branding",
 };
 
-const BYTES_PER_GB = 1024 * 1024 * 1024;
+const BYTES_PER_GB = GB;
 
 function toGb(bytes: number): string {
   return Number.isFinite(bytes) ? String(Math.round((bytes / BYTES_PER_GB) * 100) / 100) : "";

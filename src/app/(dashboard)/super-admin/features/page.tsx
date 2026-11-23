@@ -1,5 +1,6 @@
 "use client";
 
+import { GB } from "@/lib/constants/uploadPolicy";
 import { useEffect, useState } from "react";
 import { CheckCircle2, XCircle, Flag } from "lucide-react";
 import { SettingsSection } from "@/components/settings/SettingsSection";
@@ -23,7 +24,7 @@ const FEATURE_INFO: Record<FeatureKey, { label: string; description: string }> =
 const LIMIT_ROWS: { key: keyof WorkspacePlanLimits; label: string; format: (v: number) => string }[] = [
   { key: "maxMembers", label: "Members", format: (v) => (Number.isFinite(v) ? String(v) : "Unlimited") },
   { key: "maxProjects", label: "Active projects", format: (v) => (Number.isFinite(v) ? String(v) : "Unlimited") },
-  { key: "maxStorageBytes", label: "Storage", format: (v) => (Number.isFinite(v) ? `${Math.round((v / (1024 * 1024 * 1024)) * 100) / 100} GB` : "Unlimited") },
+  { key: "maxStorageBytes", label: "Storage", format: (v) => (Number.isFinite(v) ? `${Math.round((v / GB) * 100) / 100} GB` : "Unlimited") },
   { key: "maxAIRequestsPerMonth", label: "AI generations / month", format: (v) => (Number.isFinite(v) ? String(v) : "Unlimited") },
 ];
 

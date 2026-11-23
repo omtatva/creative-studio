@@ -1,0 +1,170 @@
+[
+ {
+  "label": "GCS direct (curl, signed PUT, one connection per stream)",
+  "streams": 1,
+  "mbEach": 128,
+  "totalMB": 128,
+  "aggregateMBps": 11,
+  "aggregateMbps": 88,
+  "perStreamMBps": [
+   11.1
+  ],
+  "httpCodes": [
+   200
+  ],
+  "tcpConnectMs": 24,
+  "tlsMs": 46,
+  "http": "1.1"
+ },
+ {
+  "label": "GCS direct (curl, signed PUT, one connection per stream)",
+  "streams": 2,
+  "mbEach": 128,
+  "totalMB": 256,
+  "aggregateMBps": 9.72,
+  "aggregateMbps": 78,
+  "perStreamMBps": [
+   4.9,
+   5.9
+  ],
+  "httpCodes": [
+   200
+  ],
+  "tcpConnectMs": 27,
+  "tlsMs": 51,
+  "http": "1.1"
+ },
+ {
+  "label": "GCS direct (curl, signed PUT, one connection per stream)",
+  "streams": 4,
+  "mbEach": 128,
+  "totalMB": 512,
+  "aggregateMBps": 11.64,
+  "aggregateMbps": 93,
+  "perStreamMBps": [
+   3.2,
+   3.9,
+   7.8,
+   2.9
+  ],
+  "httpCodes": [
+   200
+  ],
+  "tcpConnectMs": 36,
+  "tlsMs": 59,
+  "http": "1.1"
+ },
+ {
+  "label": "GCS direct (curl, signed PUT, one connection per stream)",
+  "streams": 8,
+  "mbEach": 128,
+  "totalMB": 1024,
+  "aggregateMBps": 11.87,
+  "aggregateMbps": 95,
+  "perStreamMBps": [
+   1.5,
+   1.5,
+   1.8,
+   1.5,
+   1.5,
+   1.5,
+   1.8,
+   1.5
+  ],
+  "httpCodes": [
+   200
+  ],
+  "tcpConnectMs": 45,
+  "tlsMs": 71,
+  "http": "1.1"
+ },
+ {
+  "label": "GCS direct (curl, signed PUT, one connection per stream)",
+  "streams": 1,
+  "mbEach": 128,
+  "totalMB": 128,
+  "aggregateMBps": 5.21,
+  "aggregateMbps": 42,
+  "perStreamMBps": [
+   5.2
+  ],
+  "httpCodes": [
+   200
+  ],
+  "tcpConnectMs": 44,
+  "tlsMs": 76,
+  "http": "1.1"
+ },
+ {
+  "label": "GCS direct (curl, signed PUT, one connection per stream)",
+  "streams": 4,
+  "mbEach": 128,
+  "totalMB": 512,
+  "aggregateMBps": 8.81,
+  "aggregateMbps": 70,
+  "perStreamMBps": [
+   2.4,
+   2.2,
+   3.4,
+   2.3
+  ],
+  "httpCodes": [
+   200
+  ],
+  "tcpConnectMs": 25,
+  "tlsMs": 68,
+  "http": "1.1"
+ },
+ {
+  "label": "Cloudflare neutral upload (curl)",
+  "streams": 1,
+  "mbEach": 64,
+  "totalMB": 64,
+  "aggregateMBps": 4.73,
+  "aggregateMbps": 38,
+  "perStreamMBps": [
+   4.9
+  ],
+  "httpCodes": [
+   200
+  ]
+ },
+ {
+  "label": "Cloudflare neutral upload (curl)",
+  "streams": 4,
+  "mbEach": 64,
+  "totalMB": 256,
+  "aggregateMBps": 10.23,
+  "aggregateMbps": 82,
+  "perStreamMBps": [
+   2.6,
+   2.6,
+   2.6,
+   2.6
+  ],
+  "httpCodes": [
+   200
+  ]
+ },
+ {
+  "label": "Cloudflare neutral upload (curl)",
+  "streams": 8,
+  "mbEach": 64,
+  "totalMB": 512,
+  "aggregateMBps": 13.35,
+  "aggregateMbps": 107,
+  "perStreamMBps": [
+   2.5,
+   1.9,
+   1.7,
+   2.5,
+   1.8,
+   1.8,
+   1.7,
+   1.7
+  ],
+  "httpCodes": [
+   200
+  ]
+ }
+]

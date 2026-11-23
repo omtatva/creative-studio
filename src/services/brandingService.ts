@@ -4,6 +4,7 @@ import { uploadFile, workspaceBrandingLogoRef } from "@/lib/firebase/storage";
 import { ref } from "firebase/storage";
 import { storage } from "@/lib/firebase/config";
 import { BrandingSettings } from "@/types/settings.types";
+import { getFixedClassSizeError } from "@/lib/constants/uploadPolicy";
 
 /**
  * File uploads for the Branding page's four image slots (logo,
@@ -18,16 +19,14 @@ import { BrandingSettings } from "@/types/settings.types";
  * nothing about color persistence is duplicated here.
  */
 
-const MAX_BRANDING_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB — logos/favicons/backgrounds are small, static images, not creative-asset uploads (which allow up to 10 GB elsewhere)
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/svg+xml", "image/gif"];
 
 function assertValidBrandingImage(file: File): void {
   if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
     throw new Error(`"${file.name}" isn't a supported image type. Use PNG, JPG, WEBP, GIF, or SVG.`);
   }
-  if (file.size > MAX_BRANDING_IMAGE_BYTES) {
-    throw new Error(`"${file.name}" is too large (max ${MAX_BRANDING_IMAGE_BYTES / (1024 * 1024)} MB).`);
-  }
+  const sizeError = getFixedClassSizeError("branding", file);
+  if (sizeError) throw new Error(sizeError);
 }
 
 export async function uploadBrandingAsset(

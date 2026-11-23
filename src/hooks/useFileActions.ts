@@ -6,7 +6,7 @@ import { useAuthContext } from "@/contexts/AuthContext";
 import * as fileService from "@/services/fileService";
 import * as fileCommentService from "@/services/fileCommentService";
 import * as fileAnnotationService from "@/services/fileAnnotationService";
-import { AnnotationData, AnnotationType, ProjectFile } from "@/types/file.types";
+import { AnnotationData, AnnotationType } from "@/types/file.types";
 import { TaskActor } from "@/types/task.types";
 
 export function useFileActions() {
@@ -42,27 +42,8 @@ export function useFileActions() {
     return run(() => fileService.uploadProjectFile(workspaceId, projectId, file, currentActor()));
   }
 
-  /** Uploads a file with live progress — does not toggle the shared `isSubmitting` flag, since callers track per-file progress themselves (see CreativeUploadZone). */
-  async function uploadWithProgress(
-    projectId: string,
-    file: File,
-    onProgress: (percent: number) => void,
-    opts?: { stageId?: string | null }
-  ) {
-    if (!workspaceId) return null;
-    return fileService.uploadProjectFile(workspaceId, projectId, file, currentActor(), { onProgress, stageId: opts?.stageId ?? null });
-  }
-
-  /** Uploads a new version of an existing asset — see ProjectFile's doc comment in file.types.ts for the version-chain model. */
-  async function uploadNewVersion(
-    projectId: string,
-    existingAsset: ProjectFile,
-    file: File,
-    onProgress?: (percent: number) => void
-  ) {
-    if (!workspaceId) return null;
-    return fileService.uploadProjectFile(workspaceId, projectId, file, currentActor(), { newVersionOf: existingAsset, onProgress });
-  }
+  // Uploads with progress (new files AND new versions) live in the app-level upload manager — see contexts/UploadContext.tsx — so they
+  // survive navigation and always finalize into the workspace/project they were started in, not whichever workspace is selected later.
 
   async function remove(fileId: string) {
     if (!workspaceId) return null;
@@ -166,8 +147,6 @@ export function useFileActions() {
     isSubmitting,
     error,
     upload,
-    uploadWithProgress,
-    uploadNewVersion,
     remove,
     archive,
     assignToStage,

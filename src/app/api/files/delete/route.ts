@@ -100,8 +100,7 @@ export async function POST(request: NextRequest) {
       if (newest) await newest.ref.update({ isLatestVersion: true, updatedAt: FieldValue.serverTimestamp() });
     }
 
-    // 5) Give the quota back: display counter + an absolute resync of the authoritative counter.
-    await db.collection("settings").doc(workspaceId).set({ storage: { usedBytes: FieldValue.increment(-sizeBytes) } }, { merge: true }).catch(() => undefined);
+    // 5) Give the quota back: an absolute resync of the authoritative counter (workspaces/{id}.storageBytesUsed — the only usage source).
     await resyncSlotCount(workspaceId, "storage").catch((err) => console.error("[files/delete] storage resync failed (deletion already applied):", err instanceof Error ? err.message : err));
 
     // 6) Audit + activity feed (ids and the file name only).

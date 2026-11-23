@@ -46,9 +46,6 @@ export const DEFAULT_SECURITY_SETTINGS: SecuritySettings = {
 };
 
 export const DEFAULT_STORAGE_SETTINGS: StorageSettings = {
-  usedBytes: 0,
-  limitBytes: 5 * 1024 * 1024 * 1024,
-  maxUploadSizeMb: 100,
   maxFileSizeMb: null,
   allowedFileTypes: ["png", "jpg", "jpeg", "gif", "svg", "pdf", "doc", "docx", "zip", "mp4", "mov"],
 };

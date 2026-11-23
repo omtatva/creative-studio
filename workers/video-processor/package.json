@@ -1,0 +1,13 @@
+{
+  "name": "feedo-video-processor",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/main.mjs",
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "firebase-admin": "^14.2.0",
+    "@google-cloud/firestore": "^8.6.0",
+    "@google-cloud/storage": "^7.19.0"
+  }
+}

@@ -10,6 +10,7 @@ export const ROUTES = {
   pricing: "/pricing",
   forgotPassword: "/forgot-password",
   dashboard: "/dashboard",
+  profile: "/profile",
   settings: "/settings",
   settingsWorkspace: "/settings/workspace",
   settingsBranding: "/settings/branding",
